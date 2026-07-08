@@ -22,3 +22,5 @@ src-tauri/gen/
 *.log
 .reasonix
 test
+*.iml
+.fastRequest
