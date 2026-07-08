@@ -8,6 +8,8 @@ export interface AppConfig {
   javaBasePackage: string;
   handlerBasePackage: string;
   modulePackageMapCommon: string;
+  themeAccent: string;
+  themeMode: "dark" | "light";
 }
 
 const STORAGE_KEY = "NovaMsg-config";
@@ -20,6 +22,8 @@ const defaults: AppConfig = {
   javaBasePackage: "com.rilon.gamebase",
   handlerBasePackage: "com.rilon.gamelogic",
   modulePackageMapCommon: "message",
+  themeAccent: "#3DD6C6",
+  themeMode: "dark",
 };
 
 function loadConfig(): AppConfig {
@@ -34,20 +38,20 @@ function loadConfig(): AppConfig {
   return { ...defaults };
 }
 
+const config = reactive<AppConfig>(loadConfig());
+
+watch(
+  () => ({ ...config }),
+  (val) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(val));
+  },
+  { deep: true },
+);
+
 /**
  * 应用配置持久化组合式函数。
  * 配置自动保存到 localStorage，重启应用不丢失。
  */
 export function useConfig() {
-  const config = reactive<AppConfig>(loadConfig());
-
-  watch(
-    () => ({ ...config }),
-    (val) => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(val));
-    },
-    { deep: true },
-  );
-
   return config;
 }

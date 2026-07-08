@@ -323,7 +323,7 @@ watch(
                     @update:value="setFieldListMode(f, String($event))"
                   />
                   <n-input v-model:value="f.desc" size="tiny" style="flex:1" placeholder="描述" />
-                  <n-button size="tiny" text @click="removeField(struct, fi)" style="min-width:20px;color:#f87171">✕</n-button>
+                  <n-button class="field-delete-btn" size="tiny" text @click="removeField(struct, fi)">✕</n-button>
                 </div>
                 <div class="field-actions">
                   <n-button size="tiny" dashed @click="addStructField(struct)">+ 添加字段</n-button>
@@ -378,7 +378,7 @@ watch(
                     @update:value="setFieldListMode(f, String($event))"
                   />
                   <n-input v-model:value="f.desc" size="tiny" style="flex:1" placeholder="描述" />
-                  <n-button size="tiny" text @click="removeField(msg, fi)" style="min-width:20px;color:#f87171">✕</n-button>
+                  <n-button class="field-delete-btn" size="tiny" text @click="removeField(msg, fi)">✕</n-button>
                 </div>
                 <div class="field-actions">
                   <n-button size="tiny" dashed @click="addField(msg)">+ 添加字段</n-button>
@@ -414,21 +414,22 @@ watch(
 <style scoped>
 .msg-editor { display:flex; flex-direction:column; height:100%; overflow:hidden; padding:12px; }
 .editor-section { flex-shrink:0; margin-bottom:16px; }
-.editor-empty { text-align:center; color:#666; padding:24px 0; }
+.editor-empty { text-align:center; color:var(--text-muted); padding:24px 0; }
 .msg-list-section { flex:1; min-height:0; overflow:hidden; margin-bottom:0; }
 .editor-tabs { height:100%; display:flex; flex-direction:column; }
 .editor-tabs :deep(.n-tabs-nav) { flex-shrink:0; }
 .editor-tabs :deep(.n-tab-pane) { height:100%; min-height:0; }
 .editor-tabs :deep(.n-tabs-pane-wrapper) { flex:1; min-height:0; }
 .tab-list { height:100%; overflow-y:auto; padding-right:4px; }
-.msg-card { border:1px solid #333; border-radius:6px; margin-bottom:6px; overflow:hidden; transition:border-color .16s, box-shadow .16s; }
-.struct-card { border-color:#27534f; }
-.msg-card.focused { border-color:#4ade80; box-shadow:0 0 0 1px rgba(74, 222, 128, .35); }
-.msg-header { display:flex; align-items:center; gap:6px; padding:6px 8px; cursor:pointer; background:#252526; }
-.msg-header:hover { background:#2a2a2a; }
-.msg-header.expanded { background:#2e2e2e; border-bottom:1px solid #333; }
-.msg-expand-icon { font-size:10px; color:#888; width:14px; text-align:center; flex-shrink:0; }
-.msg-fields { padding:6px 8px 8px 28px; background:#1e1e1e; }
+.msg-card { border:1px solid var(--border-subtle); border-radius:6px; margin-bottom:6px; overflow:hidden; transition:border-color .16s, box-shadow .16s; }
+.struct-card { border-color:var(--brand-active); }
+.msg-card.focused { border-color:var(--brand); box-shadow:0 0 0 1px var(--brand-soft); }
+.msg-header { display:flex; align-items:center; gap:6px; padding:6px 8px; cursor:pointer; background:var(--bg-panel); }
+.msg-header:hover { background:var(--bg-panel-hover); }
+.msg-header.expanded { background:var(--bg-input); border-bottom:1px solid var(--border-subtle); }
+.msg-expand-icon { font-size:10px; color:var(--text-muted); width:14px; text-align:center; flex-shrink:0; }
+.msg-fields { padding:6px 8px 8px 28px; background:var(--bg-app); }
 .field-row { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
 .field-actions { display:flex; gap:8px; margin-top:4px; }
+.field-delete-btn { min-width:20px; color:var(--danger); }
 </style>

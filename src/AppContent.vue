@@ -275,6 +275,30 @@ const editorContent = ref("");
 const messageEditorFocusName = ref("");
 const messageEditorFocusTick = ref(0);
 
+const lightEditorTheme = EditorView.theme({
+  "&": {
+    color: "#17202A",
+    backgroundColor: "#F7F9FC",
+  },
+  ".cm-content": {
+    caretColor: "#0F9488",
+  },
+  ".cm-gutters": {
+    backgroundColor: "#EEF3F7",
+    color: "#7B8797",
+    borderRightColor: "#D8E0EA",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "#EAF0F7",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "#EAF0F7",
+  },
+  ".cm-selectionBackground": {
+    backgroundColor: "rgba(15, 148, 136, 0.16)",
+  },
+}, { dark: false });
+
 // ---------- 未保存状态追踪 ----------
 const savedContent = ref("");
 // 表单模式用独立标记，避免和 XML 编辑器混用同一套比较逻辑
@@ -380,7 +404,7 @@ function handleXmlDoubleClick(event: MouseEvent, view: EditorView) {
   }
 }
 
-const editorExtensions = [
+const editorExtensions = computed(() => [
   lineNumbers(),
   highlightActiveLineGutter(),
   highlightActiveLine(),
@@ -393,8 +417,8 @@ const editorExtensions = [
       return false;
     },
   }),
-  oneDark,
-];
+  config.themeMode === "dark" ? oneDark : lightEditorTheme,
+]);
 
 /** 从指定目录加载所有 .xml 文件并解析 */
 async function loadXmlFromDirectory(dirPath: string) {
@@ -458,6 +482,87 @@ async function selectXmlFiles() {
 const config = useConfig();
 
 const showConfig = ref(false);
+
+const themePresets = [
+  { name: "NovaMsg", color: "#3DD6C6" },
+  { name: "NovaDB", color: "#5BA8FF" },
+  { name: "NovaFlow", color: "#A3E635" },
+  { name: "NovaOps", color: "#F59E0B" },
+  { name: "NovaAI", color: "#8BDAFF" },
+];
+
+const themeModeOptions = [
+  { label: "暗色", value: "dark" },
+  { label: "亮色", value: "light" },
+];
+
+function setThemeMode(mode: string) {
+  if (mode === "dark" || mode === "light") {
+    config.themeMode = mode;
+  }
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  const value = normalized.length === 3
+    ? normalized.split("").map((char) => char + char).join("")
+    : normalized;
+  const num = Number.parseInt(value, 16);
+  if (Number.isNaN(num)) return { r: 61, g: 214, b: 198 };
+  return {
+    r: (num >> 16) & 255,
+    g: (num >> 8) & 255,
+    b: num & 255,
+  };
+}
+
+function mix(hex: string, target: string, weight: number) {
+  const a = hexToRgb(hex);
+  const b = hexToRgb(target);
+  const channel = (x: number, y: number) => Math.round(x * (1 - weight) + y * weight);
+  return `#${[channel(a.r, b.r), channel(a.g, b.g), channel(a.b, b.b)]
+    .map((part) => part.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function rgba(hex: string, alpha: number) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+const themeVars = computed(() => {
+  const accent = config.themeAccent || "#3DD6C6";
+  const dark = config.themeMode === "dark";
+  return {
+    "--bg-app": dark ? "#111418" : "#F7F9FC",
+    "--bg-sider": dark ? "#15191E" : "#EEF3F7",
+    "--bg-panel": dark ? "#1B2027" : "#FFFFFF",
+    "--bg-panel-hover": dark ? "#222832" : "#EAF0F7",
+    "--bg-input": dark ? "#2A3038" : "#F1F5F9",
+    "--border-subtle": dark ? "#2B323C" : "#D8E0EA",
+    "--border-strong": dark ? "#39424E" : "#BCC8D6",
+    "--text-primary": dark ? "#E7ECF3" : "#17202A",
+    "--text-secondary": dark ? "#9AA5B5" : "#5D6978",
+    "--text-muted": dark ? "#6F7A89" : "#7B8797",
+    "--brand": accent,
+    "--brand-hover": mix(accent, "#FFFFFF", 0.18),
+    "--brand-active": mix(accent, "#000000", 0.18),
+    "--brand-soft": rgba(accent, dark ? 0.14 : 0.12),
+    "--focus": dark ? "#7DD3FC" : "#0284C7",
+    "--danger": dark ? "#F87171" : "#DC2626",
+    "--warning": dark ? "#FBBF24" : "#B7791F",
+    "--success": dark ? "#4ADE80" : "#15803D",
+    "--danger-soft": dark ? "rgba(248, 113, 113, 0.12)" : "rgba(220, 38, 38, 0.08)",
+    "--shadow-strong": dark ? "rgba(0, 0, 0, 0.6)" : "rgba(15, 23, 42, 0.16)",
+    "--swatch-ring": dark ? "rgba(255, 255, 255, 0.08)" : "rgba(15, 23, 42, 0.12)",
+  };
+});
+
+watch(themeVars, (vars) => {
+  for (const [key, value] of Object.entries(vars)) {
+    document.documentElement.style.setProperty(key, value);
+  }
+}, { immediate: true });
 
 async function pickDirectory(field: "xmlPath" | "backendPath" | "frontendPath") {
   const selected = await open({ directory: true });
@@ -655,7 +760,7 @@ function handleGenerate() {
 </script>
 
 <template>
-  <div class="app-root" @contextmenu.prevent @click="closeContextMenu">
+  <div class="app-root" :style="themeVars" @contextmenu.prevent @click="closeContextMenu">
     <!-- 左侧：文件列表 -->
     <aside class="sider">
       <div class="sider-header">
@@ -678,7 +783,7 @@ function handleGenerate() {
 
       <div class="file-list">
         <div class="file-list-title">
-          <n-text style="font-size: 12px; color: #888">文件列表（{{ parsedModules.length }}）</n-text>
+          <n-text style="font-size: 12px; color: var(--text-muted)">文件列表（{{ parsedModules.length }}）</n-text>
         </div>
 
         <div
@@ -739,7 +844,7 @@ function handleGenerate() {
         </template>
       </div>
       <div class="footer-bar">
-        <n-text style="font-size: 12px; color: #999">共 {{ parsedModules.length }} 个模块</n-text>
+        <n-text style="font-size: 12px; color: var(--text-muted)">共 {{ parsedModules.length }} 个模块</n-text>
         <n-space :size="8">
           <n-button size="small" @click="handlePreview">预览</n-button>
           <n-button type="primary" size="small" :disabled="!canGenerate" @click="handleGenerate">生成</n-button>
@@ -769,6 +874,39 @@ function handleGenerate() {
           <div class="config-modal-input">
             <n-input :value="config.frontendPath" placeholder="点击右侧按钮选择目录" readonly size="small" />
             <n-button size="small" @click="pickDirectory('frontendPath')">选择</n-button>
+          </div>
+        </div>
+        <div class="config-modal-row">
+          <n-text class="config-modal-label">主题色</n-text>
+          <div class="theme-picker">
+            <button
+              v-for="preset in themePresets"
+              :key="preset.name"
+              class="theme-swatch"
+              :class="{ active: config.themeAccent.toLowerCase() === preset.color.toLowerCase() }"
+              :style="{ '--swatch-color': preset.color }"
+              :title="preset.name"
+              type="button"
+              @click="config.themeAccent = preset.color"
+            >
+              <span class="theme-swatch-dot"></span>
+              <span>{{ preset.name }}</span>
+            </button>
+          </div>
+        </div>
+        <div class="config-modal-row">
+          <n-text class="config-modal-label">外观模式</n-text>
+          <div class="theme-picker">
+            <button
+              v-for="option in themeModeOptions"
+              :key="option.value"
+              class="theme-mode-button"
+              :class="{ active: config.themeMode === option.value }"
+              type="button"
+              @click="setThemeMode(option.value)"
+            >
+              {{ option.label }}
+            </button>
           </div>
         </div>
       </n-space>
@@ -873,7 +1011,7 @@ function handleGenerate() {
         <n-text depth="3" style="font-size: 12px">共 {{ previewFiles.length }} 个文件{{ previewSkipped.length > 0 ? `，跳过 ${previewSkipped.length} 个已存在 Handler` : '' }}</n-text>
       </template>
       <n-spin :show="previewLoading">
-        <div v-if="previewFiles.length === 0 && !previewLoading" style="text-align: center; padding: 40px; color: #666">
+        <div v-if="previewFiles.length === 0 && !previewLoading" style="text-align: center; padding: 40px; color: var(--text-muted)">
           暂无预览内容
         </div>
         <div v-else class="preview-body">
@@ -899,7 +1037,7 @@ function handleGenerate() {
               <div class="preview-content-header">{{ previewActiveFile }}</div>
               <pre class="preview-code"><code>{{ previewActiveContent }}</code></pre>
             </template>
-            <div v-else style="text-align: center; padding: 40px; color: #666">
+            <div v-else style="text-align: center; padding: 40px; color: var(--text-muted)">
               请选择左侧文件查看内容
             </div>
           </div>
@@ -920,15 +1058,17 @@ function handleGenerate() {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+  background: var(--bg-app);
+  color: var(--text-primary);
 }
 
 .sider {
   width: 240px;
   flex-shrink: 0;
-  background: #1a1a1a;
+  background: var(--bg-sider);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #333;
+  border-right: 1px solid var(--border-subtle);
 }
 
 .sider-header {
@@ -938,7 +1078,7 @@ function handleGenerate() {
 
 .title {
   display: block;
-  color: #4ade80;
+  color: var(--brand);
   font-size: 14px;
   font-weight: bold;
   margin-bottom: 12px;
@@ -972,6 +1112,64 @@ function handleGenerate() {
   gap: 8px;
 }
 
+.theme-picker {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.theme-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.theme-swatch:hover,
+.theme-swatch.active {
+  border-color: var(--swatch-color);
+  color: var(--text-primary);
+  background: var(--bg-panel-hover);
+}
+
+.theme-swatch.active {
+  box-shadow: 0 0 0 2px var(--brand-soft);
+}
+
+.theme-swatch-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--swatch-color);
+  box-shadow: 0 0 0 2px var(--swatch-ring);
+}
+
+.theme-mode-button {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.theme-mode-button:hover,
+.theme-mode-button.active {
+  border-color: var(--brand);
+  color: var(--text-primary);
+  background: var(--brand-soft);
+}
+
 .file-list {
   flex: 1;
   overflow-y: auto;
@@ -987,21 +1185,21 @@ function handleGenerate() {
   padding: 4px 8px;
   border-radius: 4px;
   cursor: pointer;
-  color: #ccc;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
 .file-item.active {
-  background: #2a2a2a;
+  background: var(--bg-panel-hover);
 }
 
 .file-item.active span {
-  color: #4ade80;
+  color: var(--brand);
 }
 
 .empty {
   text-align: center;
-  color: #666;
+  color: var(--text-muted);
   padding: 40px 0;
 }
 
@@ -1009,7 +1207,7 @@ function handleGenerate() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #1e1e1e;
+  background: var(--bg-app);
   min-width: 0;
   min-height: 0;
 }
@@ -1017,10 +1215,10 @@ function handleGenerate() {
 .editor-tab {
   flex-shrink: 0;
   padding: 6px 12px;
-  background: #252526;
+  background: var(--bg-panel);
   font-size: 12px;
-  color: #ccc;
-  border-bottom: 1px solid #333;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1029,7 +1227,7 @@ function handleGenerate() {
   flex: 1;
 }
 .editor-tab-dirty {
-  color: #f59e0b;
+  color: var(--warning);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -1046,8 +1244,8 @@ function handleGenerate() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-top: 1px solid #333;
-  background: #1e1e1e;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-app);
 }
 
 /* 关键：强制 CodeMirror 撑满父容器 */
@@ -1063,28 +1261,28 @@ function handleGenerate() {
 .ctx-menu {
   position: fixed;
   z-index: 9999;
-  background: #2a2a2a;
-  border: 1px solid #444;
+  background: var(--bg-panel-hover);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 4px 0;
   min-width: 130px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 4px 14px var(--shadow-strong);
 }
 .ctx-item {
   padding: 7px 16px;
   cursor: pointer;
   font-size: 13px;
-  color: #d4d4d4;
+  color: var(--text-primary);
   user-select: none;
 }
 .ctx-item:hover {
-  background: #3a3a3a;
+  background: var(--bg-input);
 }
 .ctx-item--danger {
-  color: #f87171;
+  color: var(--danger);
 }
 .ctx-item--danger:hover {
-  background: #4a2020;
+  background: var(--danger-soft);
 }
 
 /* ---- 预览弹窗 ---- */
@@ -1097,22 +1295,22 @@ function handleGenerate() {
   width: 240px;
   flex-shrink: 0;
   overflow-y: auto;
-  border-right: 1px solid #333;
+  border-right: 1px solid var(--border-subtle);
   padding: 4px 0;
 }
 .preview-file-item {
   padding: 6px 10px;
   cursor: pointer;
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid var(--border-subtle);
 }
 .preview-file-item:hover {
-  background: #2a2a2a;
+  background: var(--bg-panel-hover);
 }
 .preview-file-item.active {
-  background: #333;
+  background: var(--brand-soft);
 }
 .preview-file-item.active .preview-file-name {
-  color: #4ade80;
+  color: var(--brand);
 }
 .preview-file-item.skipped {
   cursor: default;
@@ -1121,12 +1319,12 @@ function handleGenerate() {
 .preview-file-name {
   display: block;
   font-size: 12px;
-  color: #ccc;
+  color: var(--text-secondary);
 }
 .preview-file-path {
   display: block;
   font-size: 10px;
-  color: #666;
+  color: var(--text-muted);
   margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
@@ -1143,9 +1341,9 @@ function handleGenerate() {
   flex-shrink: 0;
   padding: 6px 12px;
   font-size: 11px;
-  color: #888;
-  background: #1a1a1a;
-  border-bottom: 1px solid #333;
+  color: var(--text-muted);
+  background: var(--bg-sider);
+  border-bottom: 1px solid var(--border-subtle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1155,8 +1353,8 @@ function handleGenerate() {
   margin: 0;
   padding: 12px;
   overflow: auto;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--bg-app);
+  color: var(--text-primary);
   font-family: "SF Mono", "Fira Code", monospace;
   font-size: 12px;
   line-height: 1.5;
