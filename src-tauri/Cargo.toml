@@ -7,7 +7,7 @@ edition = "2021"
 rust-version = "1.77.2"
 
 [lib]
-name = "NovaMsg_lib"
+name = "nova_msg_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
