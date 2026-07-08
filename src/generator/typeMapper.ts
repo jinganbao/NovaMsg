@@ -73,11 +73,15 @@ function parseArrayElement(type: string): string | null {
   return null;
 }
 
+function upperFirst(name: string): string {
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+}
+
 /**
  * 将单个 FieldDef 映射为渲染用的 MappedField
  */
 export function mapField(field: FieldDef, structTypes = new Set<string>()): MappedField {
-  const csName = field.name;
+  const csName = upperFirst(field.name);
   // Java 字段名：首字母小写
   const javaName = field.name.charAt(0).toLowerCase() + field.name.slice(1);
 

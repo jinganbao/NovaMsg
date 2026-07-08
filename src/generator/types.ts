@@ -59,7 +59,7 @@ export interface ModuleDef {
 export interface MappedField {
   /** 原始字段名（PascalCase） */
   name: string;
-  /** C# 字段名（原样） */
+  /** C# 字段名（首字母大写） */
   csName: string;
   /** Java 字段名（首字母小写） */
   javaName: string;

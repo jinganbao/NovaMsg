@@ -27,7 +27,6 @@ export function moduleToXml(mod: ModuleDef): string {
       `type="${esc(msg.type)}"`,
     ];
     if (msg.desc) msgAttrs.push(`desc="${esc(msg.desc)}"`);
-    if (msg.id > 0) msgAttrs.push(`id="${msg.id}"`);
     lines.push(`  <Message ${msgAttrs.join(" ")}>`);
     for (const f of msg.fields) {
       const fAttrs = [

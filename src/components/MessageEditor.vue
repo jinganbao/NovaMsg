@@ -63,14 +63,57 @@ watch(
   { deep: true, flush: "post" },
 );
 
-const expandedNames = ref<number[]>([]);
-const expandedStructNames = ref<number[]>([]);
-const activeEditorTab = ref<"structs" | "messages">("structs");
+const activeEditorTab = ref<"structs" | "messages">("messages");
+const selectedStructIndex = ref(0);
+const selectedMessageIndex = ref(0);
+const structSearch = ref("");
+const messageSearch = ref("");
+const messageTypeFilter = ref("ALL");
+const expandedNames = ref<number[]>(edit.messages.length > 0 ? [0] : []);
+const expandedStructNames = ref<number[]>(edit.structs.length > 0 ? [0] : []);
 const rootRef = ref<HTMLElement | null>(null);
 const focusedMessageIndex = ref<number | null>(null);
 const showBatchFieldModal = ref(false);
 const batchFieldText = ref("");
 const batchFieldTarget = ref<MessageDef | null>(null);
+
+const selectedStruct = computed(() => edit.structs[selectedStructIndex.value] ?? null);
+const selectedMessage = computed(() => edit.messages[selectedMessageIndex.value] ?? null);
+const messageTypeFilterOptions = computed(() => [
+  { label: "全部", value: "ALL" },
+  ...MSG_TYPES,
+]);
+const filteredStructs = computed(() => {
+  const keyword = structSearch.value.trim().toLowerCase();
+  return edit.structs
+    .map((struct, index) => ({ struct, index }))
+    .filter(({ struct }) => {
+      if (!keyword) return true;
+      return struct.name.toLowerCase().includes(keyword) || (struct.desc ?? "").toLowerCase().includes(keyword);
+    });
+});
+const filteredMessages = computed(() => {
+  const keyword = messageSearch.value.trim().toLowerCase();
+  return edit.messages
+    .map((msg, index) => ({ msg, index }))
+    .filter(({ msg }) => {
+      const typeMatched = messageTypeFilter.value === "ALL" || msg.type === messageTypeFilter.value;
+      if (!typeMatched) return false;
+      if (!keyword) return true;
+      return msg.name.toLowerCase().includes(keyword) || (msg.desc ?? "").toLowerCase().includes(keyword);
+    });
+});
+const structNameSet = computed(() => new Set(edit.structs.map((struct) => struct.name.trim()).filter(Boolean)));
+const primitiveTypeSet = new Set(BASE_FIELD_TYPES.map((item) => item.value));
+
+function normalizeSelection() {
+  selectedStructIndex.value = edit.structs.length === 0
+    ? 0
+    : Math.min(selectedStructIndex.value, edit.structs.length - 1);
+  selectedMessageIndex.value = edit.messages.length === 0
+    ? 0
+    : Math.min(selectedMessageIndex.value, edit.messages.length - 1);
+}
 
 function toggleExpand(index: number) {
   const pos = expandedNames.value.indexOf(index);
@@ -84,14 +127,45 @@ function toggleStructExpand(index: number) {
   else expandedStructNames.value.push(index);
 }
 
+async function scrollStructIntoView(index: number) {
+  selectedStructIndex.value = index;
+  if (!expandedStructNames.value.includes(index)) {
+    expandedStructNames.value.push(index);
+  }
+  await nextTick();
+  rootRef.value
+    ?.querySelector<HTMLElement>(`.struct-card[data-struct-index="${index}"]`)
+    ?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function scrollMessageIntoView(index: number) {
+  selectedMessageIndex.value = index;
+  if (!expandedNames.value.includes(index)) {
+    expandedNames.value.push(index);
+  }
+  focusedMessageIndex.value = index;
+  await nextTick();
+  rootRef.value
+    ?.querySelector<HTMLElement>(`.msg-card[data-message-index="${index}"]`)
+    ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  window.setTimeout(() => {
+    if (focusedMessageIndex.value === index) {
+      focusedMessageIndex.value = null;
+    }
+  }, 1200);
+}
+
 function addMessage() {
   edit.messages.push({ id: 0, name: "", type: "C2S", desc: "", fields: [] });
   activeEditorTab.value = "messages";
-  expandedNames.value.push(edit.messages.length - 1);
+  selectedMessageIndex.value = edit.messages.length - 1;
+  expandedNames.value = [selectedMessageIndex.value];
 }
 
 function removeMessage(index: number) {
   edit.messages.splice(index, 1);
+  normalizeSelection();
+  expandedNames.value = edit.messages.length > 0 ? [selectedMessageIndex.value] : [];
 }
 
 function addField(msg: MessageDef) {
@@ -101,11 +175,14 @@ function addField(msg: MessageDef) {
 function addStruct() {
   edit.structs.push({ name: "", desc: "", fields: [] });
   activeEditorTab.value = "structs";
-  expandedStructNames.value.push(edit.structs.length - 1);
+  selectedStructIndex.value = edit.structs.length - 1;
+  expandedStructNames.value = [selectedStructIndex.value];
 }
 
 function removeStruct(index: number) {
   edit.structs.splice(index, 1);
+  normalizeSelection();
+  expandedStructNames.value = edit.structs.length > 0 ? [selectedStructIndex.value] : [];
 }
 
 function addStructField(struct: StructDef) {
@@ -114,6 +191,13 @@ function addStructField(struct: StructDef) {
 
 function removeField(target: MessageDef | StructDef, index: number) {
   target.fields.splice(index, 1);
+}
+
+function moveField(target: MessageDef | StructDef, index: number, direction: -1 | 1) {
+  const next = index + direction;
+  if (next < 0 || next >= target.fields.length) return;
+  const [field] = target.fields.splice(index, 1);
+  target.fields.splice(next, 0, field);
 }
 
 function notify() {
@@ -155,6 +239,32 @@ function baseFieldType(type: string): string {
 
 function isListField(type: string): boolean {
   return parseListElementType(type) !== null;
+}
+
+function getFieldTypeLabel(field: FieldDef): string {
+  const base = baseFieldType(field.type);
+  return isListField(field.type) ? `List<${base}>` : base;
+}
+
+function duplicateFieldNames(fields: FieldDef[]): Set<string> {
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const field of fields) {
+    const name = field.name.trim();
+    if (!name) continue;
+    if (seen.has(name)) duplicated.add(name);
+    seen.add(name);
+  }
+  return duplicated;
+}
+
+function isDuplicateField(target: MessageDef | StructDef, field: FieldDef): boolean {
+  return duplicateFieldNames(target.fields).has(field.name.trim());
+}
+
+function isUnknownFieldType(field: FieldDef): boolean {
+  const base = baseFieldType(field.type);
+  return !!base && !primitiveTypeSet.has(base) && !structNameSet.value.has(base);
 }
 
 function setFieldBaseType(field: FieldDef, type: string) {
@@ -223,10 +333,9 @@ function handleBatchAddFields() {
 async function focusMessageByName(name: string) {
   const index = edit.messages.findIndex((msg) => msg.name === name);
   if (index < 0) return;
-  if (!expandedNames.value.includes(index)) {
-    expandedNames.value.push(index);
-  }
   activeEditorTab.value = "messages";
+  selectedMessageIndex.value = index;
+  expandedNames.value = [index];
   focusedMessageIndex.value = index;
   await nextTick();
   const card = rootRef.value?.querySelector<HTMLElement>(`.msg-card[data-message-index="${index}"]`);
@@ -247,6 +356,37 @@ watch(
     }
   },
 );
+
+watch(() => props.module.fileName, () => {
+  selectedStructIndex.value = 0;
+  selectedMessageIndex.value = 0;
+  expandedStructNames.value = edit.structs.length > 0 ? [0] : [];
+  expandedNames.value = edit.messages.length > 0 ? [0] : [];
+}, { flush: "post" });
+
+watch(() => [edit.structs.length, edit.messages.length], () => {
+  normalizeSelection();
+  if (edit.structs.length > 0 && expandedStructNames.value.length === 0) {
+    expandedStructNames.value = [selectedStructIndex.value];
+  }
+  if (edit.messages.length > 0 && expandedNames.value.length === 0) {
+    expandedNames.value = [selectedMessageIndex.value];
+  }
+});
+
+watch(filteredStructs, (items) => {
+  if (items.length > 0 && !items.some((item) => item.index === selectedStructIndex.value)) {
+    selectedStructIndex.value = items[0].index;
+    expandedStructNames.value = [items[0].index];
+  }
+});
+
+watch(filteredMessages, (items) => {
+  if (items.length > 0 && !items.some((item) => item.index === selectedMessageIndex.value)) {
+    selectedMessageIndex.value = items[0].index;
+    expandedNames.value = [items[0].index];
+  }
+});
 </script>
 
 <template>
@@ -264,94 +404,69 @@ watch(
       <n-tabs v-model:value="activeEditorTab" type="line" animated class="editor-tabs">
         <template #suffix>
           <n-button
-            v-if="activeEditorTab === 'structs'"
-            size="tiny"
-            type="primary"
-            @click="addStruct"
-          >
-            + 添加对象
-          </n-button>
-          <n-button
-            v-else
+            v-if="activeEditorTab === 'messages'"
             size="tiny"
             type="primary"
             @click="addMessage"
           >
             + 添加消息
           </n-button>
+          <n-button
+            v-else
+            size="tiny"
+            type="primary"
+            @click="addStruct"
+          >
+            + 添加对象
+          </n-button>
         </template>
 
-        <n-tab-pane name="structs" :tab="`对象（${edit.structs.length}）`">
-          <div class="tab-list">
-            <div v-if="edit.structs.length === 0" class="editor-empty">
-              <n-text depth="3">暂无对象，可按需添加 Struct</n-text>
-            </div>
-
-            <div
-              v-for="(struct, si) in edit.structs"
-              :key="si"
-              class="msg-card struct-card"
-            >
-              <div class="msg-header" :class="{ expanded: expandedStructNames.includes(si) }" @click="toggleStructExpand(si)">
-                <span class="msg-expand-icon">{{ expandedStructNames.includes(si) ? '▼' : '▶' }}</span>
-                <n-input v-model:value="struct.name" size="tiny" style="width:220px;font-family:monospace" placeholder="对象名" @click.stop />
-                <n-input v-model:value="struct.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
-                <n-popconfirm @positive-click="removeStruct(si)">
-                  <template #trigger>
-                    <n-button size="tiny" type="error" text @click.stop style="min-width:20px">✕</n-button>
-                  </template>
-                  确定删除此对象？
-                </n-popconfirm>
-              </div>
-
-              <div v-if="expandedStructNames.includes(si)" class="msg-fields">
-                <div v-for="(f, fi) in struct.fields" :key="fi" class="field-row">
-                  <n-select
-                    :value="baseFieldType(f.type)"
-                    :options="fieldTypeOptions"
-                    tag
-                    size="tiny"
-                    style="width:140px"
-                    @update:value="setFieldBaseType(f, String($event))"
-                  />
-                  <n-input v-model:value="f.name" size="tiny" style="width:160px;font-family:monospace" placeholder="字段名" />
-                  <n-select
-                    :value="isListField(f.type) ? 'list' : 'single'"
-                    :options="FIELD_LIST_OPTIONS"
-                    size="tiny"
-                    style="width:86px"
-                    @update:value="setFieldListMode(f, String($event))"
-                  />
-                  <n-input v-model:value="f.desc" size="tiny" style="flex:1" placeholder="描述" />
-                  <n-button class="field-delete-btn" size="tiny" text @click="removeField(struct, fi)">✕</n-button>
-                </div>
-                <div class="field-actions">
-                  <n-button size="tiny" dashed @click="addStructField(struct)">+ 添加字段</n-button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </n-tab-pane>
-
         <n-tab-pane name="messages" :tab="`消息（${edit.messages.length}）`">
-          <div class="tab-list">
-            <div v-if="edit.messages.length === 0" class="editor-empty">
-              <n-text depth="3">暂无消息，点击「添加消息」开始</n-text>
+          <div class="tab-workspace">
+            <div class="entity-index">
+              <n-input
+                v-model:value="messageSearch"
+                size="tiny"
+                clearable
+                placeholder="搜索消息"
+                class="entity-search"
+              />
+              <n-select
+                v-model:value="messageTypeFilter"
+                :options="messageTypeFilterOptions"
+                size="tiny"
+                class="entity-filter"
+              />
+              <button
+                v-for="{ msg, index: mi } in filteredMessages"
+                :key="mi"
+                class="entity-index-item"
+                :class="{ active: selectedMessageIndex === mi }"
+                type="button"
+                @click="scrollMessageIntoView(mi)"
+              >
+                <span>{{ msg.name || '未命名消息' }}</span>
+                <small>{{ msg.type }}</small>
+              </button>
+              <div v-if="edit.messages.length > 0 && filteredMessages.length === 0" class="entity-empty">无匹配消息</div>
             </div>
+            <div class="tab-list">
+              <div v-if="edit.messages.length === 0" class="editor-empty">
+                <n-text depth="3">暂无消息，点击「添加消息」开始</n-text>
+              </div>
 
-            <div
-              v-for="(msg, mi) in edit.messages"
-              :key="mi"
-              class="msg-card"
-              :class="{ focused: focusedMessageIndex === mi }"
-              :data-message-index="mi"
-            >
-              <div class="msg-header" :class="{ expanded: expandedNames.includes(mi) }" @click="toggleExpand(mi)">
-                <span class="msg-expand-icon">{{ expandedNames.includes(mi) ? '▼' : '▶' }}</span>
-                <n-input v-model:value="msg.name" size="tiny" style="width:200px;font-family:monospace" placeholder="消息名" @click.stop />
-                <n-select v-model:value="msg.type" :options="MSG_TYPES" size="tiny" style="width:80px" @click.stop />
-                <n-input v-model:value="msg.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
-                <n-popconfirm @positive-click="removeMessage(mi)">
+              <div
+                v-if="selectedMessage"
+                class="msg-card"
+                :class="{ focused: focusedMessageIndex === selectedMessageIndex }"
+                :data-message-index="selectedMessageIndex"
+              >
+              <div class="msg-header" :class="{ expanded: expandedNames.includes(selectedMessageIndex) }" @click="toggleExpand(selectedMessageIndex)">
+                <span class="msg-expand-icon">{{ expandedNames.includes(selectedMessageIndex) ? '▼' : '▶' }}</span>
+                <n-input v-model:value="selectedMessage.name" size="tiny" style="width:200px;font-family:monospace" placeholder="消息名" @click.stop />
+                <n-select v-model:value="selectedMessage.type" :options="MSG_TYPES" size="tiny" style="width:80px" @click.stop />
+                <n-input v-model:value="selectedMessage.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
+                <n-popconfirm @positive-click="removeMessage(selectedMessageIndex)">
                   <template #trigger>
                     <n-button size="tiny" type="error" text @click.stop style="min-width:20px">✕</n-button>
                   </template>
@@ -359,8 +474,20 @@ watch(
                 </n-popconfirm>
               </div>
 
-              <div v-if="expandedNames.includes(mi)" class="msg-fields">
-                <div v-for="(f, fi) in msg.fields" :key="fi" class="field-row">
+              <div v-if="expandedNames.includes(selectedMessageIndex)" class="msg-fields">
+                <div class="field-row field-row--head">
+                  <span>类型</span>
+                  <span>字段名</span>
+                  <span>集合</span>
+                  <span>描述</span>
+                  <span>操作</span>
+                </div>
+                <div
+                  v-for="(f, fi) in selectedMessage.fields"
+                  :key="fi"
+                  class="field-row"
+                  :class="{ invalid: isDuplicateField(selectedMessage, f) || isUnknownFieldType(f) }"
+                >
                   <n-select
                     :value="baseFieldType(f.type)"
                     :options="fieldTypeOptions"
@@ -378,13 +505,117 @@ watch(
                     @update:value="setFieldListMode(f, String($event))"
                   />
                   <n-input v-model:value="f.desc" size="tiny" style="flex:1" placeholder="描述" />
-                  <n-button class="field-delete-btn" size="tiny" text @click="removeField(msg, fi)">✕</n-button>
+                  <div class="field-row-actions">
+                    <n-button size="tiny" text :disabled="fi === 0" @click="moveField(selectedMessage, fi, -1)">↑</n-button>
+                    <n-button size="tiny" text :disabled="fi === selectedMessage.fields.length - 1" @click="moveField(selectedMessage, fi, 1)">↓</n-button>
+                    <n-button class="field-delete-btn" size="tiny" text @click="removeField(selectedMessage, fi)">✕</n-button>
+                  </div>
+                  <div v-if="isDuplicateField(selectedMessage, f) || isUnknownFieldType(f)" class="field-warning">
+                    <span v-if="isDuplicateField(selectedMessage, f)">字段名重复</span>
+                    <span v-if="isUnknownFieldType(f)">未知类型 {{ getFieldTypeLabel(f) }}</span>
+                  </div>
                 </div>
                 <div class="field-actions">
-                  <n-button size="tiny" dashed @click="addField(msg)">+ 添加字段</n-button>
-                  <n-button size="tiny" dashed @click="openBatchFieldModal(msg)">批量添加字段</n-button>
+                  <n-button size="tiny" dashed @click="addField(selectedMessage)">+ 添加字段</n-button>
+                  <n-button size="tiny" dashed @click="openBatchFieldModal(selectedMessage)">批量添加字段</n-button>
                 </div>
               </div>
+            </div>
+            </div>
+          </div>
+        </n-tab-pane>
+
+        <n-tab-pane name="structs" :tab="`对象（${edit.structs.length}）`">
+          <div class="tab-workspace">
+            <div class="entity-index">
+              <n-input
+                v-model:value="structSearch"
+                size="tiny"
+                clearable
+                placeholder="搜索对象"
+                class="entity-search"
+              />
+              <button
+                v-for="{ struct, index: si } in filteredStructs"
+                :key="si"
+                class="entity-index-item"
+                :class="{ active: selectedStructIndex === si }"
+                type="button"
+                @click="scrollStructIntoView(si)"
+              >
+                <span>{{ struct.name || '未命名对象' }}</span>
+                <small>{{ struct.fields.length }}</small>
+              </button>
+              <div v-if="edit.structs.length > 0 && filteredStructs.length === 0" class="entity-empty">无匹配对象</div>
+            </div>
+            <div class="tab-list">
+              <div v-if="edit.structs.length === 0" class="editor-empty">
+                <n-text depth="3">暂无对象，可按需添加 Struct</n-text>
+              </div>
+
+              <div
+                v-if="selectedStruct"
+                class="msg-card struct-card"
+                :data-struct-index="selectedStructIndex"
+              >
+              <div class="msg-header" :class="{ expanded: expandedStructNames.includes(selectedStructIndex) }" @click="toggleStructExpand(selectedStructIndex)">
+                <span class="msg-expand-icon">{{ expandedStructNames.includes(selectedStructIndex) ? '▼' : '▶' }}</span>
+                <n-input v-model:value="selectedStruct.name" size="tiny" style="width:220px;font-family:monospace" placeholder="对象名" @click.stop />
+                <n-input v-model:value="selectedStruct.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
+                <n-popconfirm @positive-click="removeStruct(selectedStructIndex)">
+                  <template #trigger>
+                    <n-button size="tiny" type="error" text @click.stop style="min-width:20px">✕</n-button>
+                  </template>
+                  确定删除此对象？
+                </n-popconfirm>
+              </div>
+
+              <div v-if="expandedStructNames.includes(selectedStructIndex)" class="msg-fields">
+                <div class="field-row field-row--head">
+                  <span>类型</span>
+                  <span>字段名</span>
+                  <span>集合</span>
+                  <span>描述</span>
+                  <span>操作</span>
+                </div>
+                <div
+                  v-for="(f, fi) in selectedStruct.fields"
+                  :key="fi"
+                  class="field-row"
+                  :class="{ invalid: isDuplicateField(selectedStruct, f) || isUnknownFieldType(f) }"
+                >
+                  <n-select
+                    :value="baseFieldType(f.type)"
+                    :options="fieldTypeOptions"
+                    tag
+                    size="tiny"
+                    style="width:140px"
+                    @update:value="setFieldBaseType(f, String($event))"
+                  />
+                  <n-input v-model:value="f.name" size="tiny" style="width:160px;font-family:monospace" placeholder="字段名" />
+                  <n-select
+                    :value="isListField(f.type) ? 'list' : 'single'"
+                    :options="FIELD_LIST_OPTIONS"
+                    size="tiny"
+                    style="width:86px"
+                    @update:value="setFieldListMode(f, String($event))"
+                  />
+                  <n-input v-model:value="f.desc" size="tiny" style="flex:1" placeholder="描述" />
+                  <div class="field-row-actions">
+                    <n-button size="tiny" text :disabled="fi === 0" @click="moveField(selectedStruct, fi, -1)">↑</n-button>
+                    <n-button size="tiny" text :disabled="fi === selectedStruct.fields.length - 1" @click="moveField(selectedStruct, fi, 1)">↓</n-button>
+                    <n-button class="field-delete-btn" size="tiny" text @click="removeField(selectedStruct, fi)">✕</n-button>
+                  </div>
+                  <div v-if="isDuplicateField(selectedStruct, f) || isUnknownFieldType(f)" class="field-warning">
+                    <span v-if="isDuplicateField(selectedStruct, f)">字段名重复</span>
+                    <span v-if="isUnknownFieldType(f)">未知类型 {{ getFieldTypeLabel(f) }}</span>
+                  </div>
+                </div>
+                <div class="field-actions">
+                  <n-button size="tiny" dashed @click="addStructField(selectedStruct)">+ 添加字段</n-button>
+                </div>
+              </div>
+            </div>
             </div>
           </div>
         </n-tab-pane>
@@ -420,6 +651,17 @@ watch(
 .editor-tabs :deep(.n-tabs-nav) { flex-shrink:0; }
 .editor-tabs :deep(.n-tab-pane) { height:100%; min-height:0; }
 .editor-tabs :deep(.n-tabs-pane-wrapper) { flex:1; min-height:0; }
+.tab-workspace { height:100%; min-height:0; display:grid; grid-template-columns:180px minmax(0, 1fr); gap:10px; }
+.entity-index { min-height:0; overflow-y:auto; border:1px solid var(--border-subtle); border-radius:6px; background:var(--bg-panel); padding:6px; }
+.entity-search { margin-bottom:6px; }
+.entity-filter { margin-bottom:8px; }
+.entity-empty { padding:12px 8px; color:var(--text-muted); font-size:12px; text-align:center; }
+.entity-index-item { width:100%; min-height:28px; border:0; border-radius:4px; background:transparent; color:var(--text-secondary); display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0 8px; cursor:pointer; font-size:12px; text-align:left; }
+.entity-index-item:hover { background:var(--bg-panel-hover); color:var(--text-primary); }
+.entity-index-item.active { background:var(--brand-soft); color:var(--brand); }
+.entity-index-item span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.entity-index-item small { color:var(--text-muted); font-size:11px; flex-shrink:0; }
+.entity-index-item.active small { color:var(--brand); }
 .tab-list { height:100%; overflow-y:auto; padding-right:4px; }
 .msg-card { border:1px solid var(--border-subtle); border-radius:6px; margin-bottom:6px; overflow:hidden; transition:border-color .16s, box-shadow .16s; }
 .struct-card { border-color:var(--brand-active); }
@@ -429,7 +671,12 @@ watch(
 .msg-header.expanded { background:var(--bg-input); border-bottom:1px solid var(--border-subtle); }
 .msg-expand-icon { font-size:10px; color:var(--text-muted); width:14px; text-align:center; flex-shrink:0; }
 .msg-fields { padding:6px 8px 8px 28px; background:var(--bg-app); }
-.field-row { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+.field-row { display:grid; grid-template-columns:140px 160px 86px minmax(160px, 1fr) 78px; align-items:center; gap:6px; margin-bottom:4px; }
+.field-row:hover:not(.field-row--head) { background:var(--bg-panel); }
+.field-row.invalid { border-left:2px solid var(--warning); padding-left:4px; }
+.field-row--head { color:var(--text-muted); font-size:11px; padding:0 2px 4px; }
+.field-row-actions { display:flex; align-items:center; justify-content:flex-end; gap:2px; }
+.field-warning { grid-column:1 / -1; display:flex; gap:8px; color:var(--warning); font-size:11px; padding:0 0 2px 2px; }
 .field-actions { display:flex; gap:8px; margin-top:4px; }
 .field-delete-btn { min-width:20px; color:var(--danger); }
 </style>

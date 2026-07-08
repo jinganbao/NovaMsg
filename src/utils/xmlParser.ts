@@ -41,7 +41,8 @@ function parseField(node: Record<string, unknown>): FieldDef {
 /** 解析单个消息节点 */
 function parseMessage(node: Record<string, unknown>): MessageDef {
   return {
-    id: Number(node.id ?? 0),
+    // XML 中不允许手动配置消息 ID；即使写了 id 也忽略，统一由本地 ID 分配器生成。
+    id: 0,
     name: String(node.name ?? ""),
     type: String(node.type ?? "S2C") as MessageType,
     desc: String(node.desc ?? ""),
