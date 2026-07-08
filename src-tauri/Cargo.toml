@@ -1,6 +1,6 @@
 [package]
 name = "NovaMsg"
-version = "1.0.2"
+version = "1.0.3"
 description = "游戏前后端网络协议一键生成工具"
 authors = ["Sunshine"]
 edition = "2021"
@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }

@@ -21,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let app_dir = app.path().app_data_dir().expect("无法获取应用数据目录");
             std::fs::create_dir_all(&app_dir).ok();
