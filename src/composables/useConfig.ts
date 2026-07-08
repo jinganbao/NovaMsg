@@ -10,7 +10,7 @@ export interface AppConfig {
   modulePackageMapCommon: string;
 }
 
-const STORAGE_KEY = "novamsg-config";
+const STORAGE_KEY = "NovaMsg-config";
 
 const defaults: AppConfig = {
   xmlPath: "",
