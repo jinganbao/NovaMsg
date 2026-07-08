@@ -9,7 +9,7 @@
  *          GameHandlerManager.java（汇总，仅 C2S/P2S 注册）、
  *          XXXHandler.java（仅 C2S，已存在则跳过）
  */
-import type { ModuleDef, GenerateOptions, GenerateResult, RenderMessage } from "./types";
+import type { ModuleDef, GenerateOptions, GenerateResult, RenderMessage, RenderStruct } from "./types";
 import { templates } from "./templates";
 import { formatGeneratedCSharp, formatGeneratedJava } from "./codeFormatter";
 import {
@@ -39,12 +39,16 @@ export async function generateProtocols(
 
   // 所有渲染消息（展平，保留输入顺序）
   const allMessages: RenderMessage[] = renderModules.flatMap((m) => m.messages);
+  const allStructs: RenderStruct[] = renderModules.flatMap((m) => m.structs);
 
   const writtenFiles: string[] = [];
   const skippedFiles: string[] = [];
 
   // ---------- 1. C# MessageBeans.cs ----------
-  const messageBeansContent = formatGeneratedCSharp(templates.messageBeansCs({ messages: allMessages }));
+  const messageBeansContent = formatGeneratedCSharp(templates.messageBeansCs({
+    structs: allStructs,
+    messages: allMessages,
+  }));
   const messageBeansPath = joinPath(csharpPath, "MessageBeans.cs");
   await ensureDir(csharpPath);
   await writeFile(messageBeansPath, messageBeansContent);
@@ -64,7 +68,17 @@ export async function generateProtocols(
   await writeFile(messagePoolPath, messagePoolContent);
   writtenFiles.push(messagePoolPath);
 
-  // ---------- 3. Java 实体类（每消息一个文件，按模块分包） ----------
+  // ---------- 3. Java 对象类（每 Struct 一个文件，按模块分包） ----------
+  for (const struct of allStructs) {
+    const content = formatGeneratedJava(templates.javaStruct({ ...struct, author: opts.author }));
+    const dir = joinPath(javaPath, packageToPath(struct.javaPackage));
+    const filePath = joinPath(dir, `${struct.javaClassName}.java`);
+    await ensureDir(dir);
+    await writeFile(filePath, content);
+    writtenFiles.push(filePath);
+  }
+
+  // ---------- 4. Java 实体类（每消息一个文件，按模块分包） ----------
   for (const msg of allMessages) {
     const content = formatGeneratedJava(templates.javaMessage({ ...msg, author: opts.author }));
     const dir = joinPath(javaPath, packageToPath(msg.javaPackage));
@@ -74,7 +88,7 @@ export async function generateProtocols(
     writtenFiles.push(filePath);
   }
 
-  // ---------- 4. Java MessageId.java ----------
+  // ---------- 5. Java MessageId.java ----------
   const s2pIdMsgs = allMessages.filter((m) => m.type === "S2P");
   const p2sIdMsgs = allMessages.filter((m) => m.type === "P2S");
   const s2cIdMsgs = allMessages.filter((m) => m.type === "S2C");
@@ -95,7 +109,7 @@ export async function generateProtocols(
   await writeFile(messageIdPath, messageIdContent);
   writtenFiles.push(messageIdPath);
 
-  // ---------- 5. Java GameHandlerManager.java（仅 C2S/P2S 注册） ----------
+  // ---------- 6. Java GameHandlerManager.java（仅 C2S/P2S 注册） ----------
   const handlerRegMsgs = allMessages.filter((m) => isServerHandle(m.type));
   const gameHandlerManagerContent = formatGeneratedJava(templates.gameHandlerManagerJava({
     gameHandlerManagerPackage: opts.gameHandlerManagerPackage,
@@ -108,7 +122,7 @@ export async function generateProtocols(
   await writeFile(gameHandlerManagerPath, gameHandlerManagerContent);
   writtenFiles.push(gameHandlerManagerPath);
 
-  // ---------- 6. Java XXXHandler.java（仅 C2S，已存在则跳过） ----------
+  // ---------- 7. Java XXXHandler.java（仅 C2S，已存在则跳过） ----------
   for (const msg of allMessages.filter((m) => m.type === "C2S")) {
     const dir = joinPath(javaPath, packageToPath(msg.handlerPackage));
     const filePath = joinPath(dir, `${msg.handlerClassName}.java`);
@@ -152,6 +166,7 @@ export async function previewProtocols(
   const opts = resolveOptions(options);
   const renderModules = buildRenderModules(modules, opts);
   const allMessages: RenderMessage[] = renderModules.flatMap((m) => m.messages);
+  const allStructs: RenderStruct[] = renderModules.flatMap((m) => m.structs);
 
   const files: PreviewFile[] = [];
   const skippedHandlerFiles: string[] = [];
@@ -159,7 +174,10 @@ export async function previewProtocols(
   // 1. C# MessageBeans.cs
   files.push({
     path: joinPath(csharpPath, "MessageBeans.cs"),
-    content: formatGeneratedCSharp(templates.messageBeansCs({ messages: allMessages })),
+    content: formatGeneratedCSharp(templates.messageBeansCs({
+      structs: allStructs,
+      messages: allMessages,
+    })),
   });
 
   // 2. C# MessagePool.cs
@@ -176,7 +194,16 @@ export async function previewProtocols(
     })),
   });
 
-  // 3. Java 实体类
+  // 3. Java 对象类
+  for (const struct of allStructs) {
+    const dir = joinPath(javaPath, packageToPath(struct.javaPackage));
+    files.push({
+      path: joinPath(dir, `${struct.javaClassName}.java`),
+      content: formatGeneratedJava(templates.javaStruct({ ...struct, author: opts.author })),
+    });
+  }
+
+  // 4. Java 实体类
   for (const msg of allMessages) {
     const dir = joinPath(javaPath, packageToPath(msg.javaPackage));
     files.push({
@@ -185,7 +212,7 @@ export async function previewProtocols(
     });
   }
 
-  // 4. Java MessageId.java
+  // 5. Java MessageId.java
   const s2pIdMsgs = allMessages.filter((m) => m.type === "S2P");
   const p2sIdMsgs = allMessages.filter((m) => m.type === "P2S");
   const s2cIdMsgs = allMessages.filter((m) => m.type === "S2C");
@@ -205,7 +232,7 @@ export async function previewProtocols(
     })),
   });
 
-  // 5. Java GameHandlerManager.java
+  // 6. Java GameHandlerManager.java
   const handlerRegMsgs = allMessages.filter((m) => isServerHandle(m.type));
   const gameHandlerManagerDir = joinPath(javaPath, packageToPath(opts.gameHandlerManagerPackage));
   files.push({
@@ -217,7 +244,7 @@ export async function previewProtocols(
     })),
   });
 
-  // 6. Java XXXHandler.java（仅 C2S，标记已存在则跳过）
+  // 7. Java XXXHandler.java（仅 C2S，标记已存在则跳过）
   for (const msg of allMessages.filter((m) => m.type === "C2S")) {
     const dir = joinPath(javaPath, packageToPath(msg.handlerPackage));
     const filePath = joinPath(dir, `${msg.handlerClassName}.java`);

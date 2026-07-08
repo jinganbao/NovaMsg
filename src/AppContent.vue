@@ -484,6 +484,7 @@ function onFormChanged(mod: ModuleDef) {
   if (existing) {
     existing.moduleName = mod.moduleName;
     existing.desc = mod.desc;
+    existing.structs = mod.structs;
     existing.messages = mod.messages;
   }
   isFormDirty.value = true;

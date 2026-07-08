@@ -13,14 +13,14 @@
  * 也兼容根节点为 <Root><Module>...</Module></Root> 的形式。
  */
 import { XMLParser } from "fast-xml-parser";
-import type { ModuleDef, MessageDef, FieldDef, MessageType } from "@/generator/types";
+import type { ModuleDef, MessageDef, FieldDef, StructDef, MessageType } from "@/generator/types";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
   removeNSPrefix: true,
   trimValues: true,
-  isArray: (name) => name === "Message" || name === "Field" || name === "Module",
+  isArray: (name) => name === "Message" || name === "Struct" || name === "Field" || name === "Module",
 });
 
 /** 从解析结果中提取数组（兼容单元素/数组） */
@@ -49,12 +49,22 @@ function parseMessage(node: Record<string, unknown>): MessageDef {
   };
 }
 
+/** 解析单个对象结构节点 */
+function parseStruct(node: Record<string, unknown>): StructDef {
+  return {
+    name: String(node.name ?? ""),
+    desc: String(node.desc ?? ""),
+    fields: toArray(node.Field as Record<string, unknown>[] | undefined).map(parseField),
+  };
+}
+
 /** 解析单个模块节点 */
 function parseModule(node: Record<string, unknown>): ModuleDef {
   return {
     fileName: String(node.fileName ?? ""),
     moduleName: String(node.moduleName ?? ""),
     desc: String(node.desc ?? ""),
+    structs: toArray(node.Struct as Record<string, unknown>[] | undefined).map(parseStruct),
     messages: toArray(node.Message as Record<string, unknown>[] | undefined).map(parseMessage),
   };
 }

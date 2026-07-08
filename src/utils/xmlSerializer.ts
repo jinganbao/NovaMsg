@@ -7,6 +7,20 @@ export function moduleToXml(mod: ModuleDef): string {
   const modAttrs = [`moduleName="${esc(mod.moduleName)}"`];
   if (mod.desc) modAttrs.push(`desc="${esc(mod.desc)}"`);
   lines.push(`<Module ${modAttrs.join(" ")}>`);
+  for (const struct of mod.structs) {
+    const structAttrs = [`name="${esc(struct.name)}"`];
+    if (struct.desc) structAttrs.push(`desc="${esc(struct.desc)}"`);
+    lines.push(`  <Struct ${structAttrs.join(" ")}>`);
+    for (const f of struct.fields) {
+      const fAttrs = [
+        `type="${esc(f.type)}"`,
+        `name="${esc(f.name)}"`,
+      ];
+      if (f.desc) fAttrs.push(`desc="${esc(f.desc)}"`);
+      lines.push(`    <Field ${fAttrs.join(" ")}/>`);
+    }
+    lines.push("  </Struct>");
+  }
   for (const msg of mod.messages) {
     const msgAttrs = [
       `name="${esc(msg.name)}"`,

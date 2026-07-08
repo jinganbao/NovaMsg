@@ -6,13 +6,15 @@
 import type {
   ModuleDef,
   MessageDef,
+  StructDef,
   RenderMessage,
   RenderModule,
+  RenderStruct,
   MappedField,
   GenerateOptions,
   MessageType,
 } from "./types";
-import { mapFields } from "./typeMapper";
+import { mapFieldsWithStructs } from "./typeMapper";
 
 // ============================================================
 // 缩进常量
@@ -34,8 +36,14 @@ function genCsEncodeLines(fields: MappedField[]): string[] {
     if (f.isArray) {
       lines.push(`${T}${T}${T}writeShort(buf, (short)this.${f.csName}.Count);`);
       lines.push(`${T}${T}${T}for (int i = 0; i < this.${f.csName}.Count; i++) {`);
-      lines.push(`${T}${T}${T}${T}${f.csWrite}(buf, this.${f.csName}[i]);`);
+      if (f.element?.isStruct) {
+        lines.push(`${T}${T}${T}${T}this.${f.csName}[i].encode(buf);`);
+      } else {
+        lines.push(`${T}${T}${T}${T}${f.csWrite}(buf, this.${f.csName}[i]);`);
+      }
       lines.push(`${T}${T}${T}}`);
+    } else if (f.isStruct) {
+      lines.push(`${T}${T}${T}this.${f.csName}.encode(buf);`);
     } else {
       lines.push(`${T}${T}${T}${f.csWrite}(buf, this.${f.csName});`);
     }
@@ -51,8 +59,17 @@ function genCsDecodeLines(fields: MappedField[]): string[] {
       lines.push(`${T}${T}${T}int ${f.csName}_length =readShort(buf);`);
       lines.push(`${T}${T}${T}this.${f.csName}=new RepeatedField<${f.element!.csType}>();`);
       lines.push(`${T}${T}${T}for (int i = 0; i < ${f.csName}_length; i++) {`);
-      lines.push(`${T}${T}${T}${T}this.${f.csName}.Add(${f.csRead}(buf));`);
+      if (f.element?.isStruct) {
+        lines.push(`${T}${T}${T}${T}${f.element.csType} item = new ${f.element.csType}();`);
+        lines.push(`${T}${T}${T}${T}item.decode(buf);`);
+        lines.push(`${T}${T}${T}${T}this.${f.csName}.Add(item);`);
+      } else {
+        lines.push(`${T}${T}${T}${T}this.${f.csName}.Add(${f.csRead}(buf));`);
+      }
       lines.push(`${T}${T}${T}}`);
+    } else if (f.isStruct) {
+      lines.push(`${T}${T}${T}this.${f.csName} = new ${f.csType}();`);
+      lines.push(`${T}${T}${T}this.${f.csName}.decode(buf);`);
     } else {
       lines.push(`${T}${T}${T}this.${f.csName} = ${f.csRead}(buf);`);
     }
@@ -67,8 +84,14 @@ function genJavaWriteLines(fields: MappedField[]): string[] {
     if (f.isArray) {
       lines.push(`${S4}writeShort(buf, (short)this.${f.javaName}.size());`);
       lines.push(`${S4}for (int i = 0; i < this.${f.javaName}.size(); i++) {`);
-      lines.push(`${S8}${f.javaWrite}(buf, this.${f.javaName}.get(i));`);
+      if (f.element?.isStruct) {
+        lines.push(`${S8}writeBean(buf, this.${f.javaName}.get(i));`);
+      } else {
+        lines.push(`${S8}${f.javaWrite}(buf, this.${f.javaName}.get(i));`);
+      }
       lines.push(`${S4}}`);
+    } else if (f.isStruct) {
+      lines.push(`${S4}writeBean(buf, this.${f.javaName});`);
     } else {
       lines.push(`${S4}${f.javaWrite}(buf, this.${f.javaName});`);
     }
@@ -84,8 +107,14 @@ function genJavaReadLines(fields: MappedField[]): string[] {
       lines.push(`${S4}int ${f.javaName}_length = readShort(buf);`);
       lines.push(`${S4}this.${f.javaName} = new ArrayList<${f.element!.javaType}>();`);
       lines.push(`${S4}for (int i = 0; i < ${f.javaName}_length; i++) {`);
-      lines.push(`${S8}this.${f.javaName}.add(${f.javaRead}(buf));`);
+      if (f.element?.isStruct) {
+        lines.push(`${S8}this.${f.javaName}.add(readBean(buf, ${f.element.javaType}.class));`);
+      } else {
+        lines.push(`${S8}this.${f.javaName}.add(${f.javaRead}(buf));`);
+      }
       lines.push(`${S4}}`);
+    } else if (f.isStruct) {
+      lines.push(`${S4}this.${f.javaName} = readBean(buf, ${f.javaType}.class);`);
     } else {
       lines.push(`${S4}this.${f.javaName} = ${f.javaRead}(buf);`);
     }
@@ -144,6 +173,15 @@ function moduleToPackageSeg(moduleName: string, map: Record<string, string>): st
   return map[moduleName] ?? moduleName;
 }
 
+function fieldStructTypes(fields: MappedField[]): string[] {
+  const names = new Set<string>();
+  for (const field of fields) {
+    if (field.element?.isStruct) names.add(field.element.javaType);
+    else if (field.isStruct) names.add(field.javaType);
+  }
+  return [...names];
+}
+
 // ============================================================
 // 渲染模型构建
 // ============================================================
@@ -160,10 +198,12 @@ export function buildRenderMessage(
   msg: MessageDef,
   module: ModuleDef,
   opts: ResolvedOptions,
+  structTypes: Set<string>,
 ): RenderMessage {
   const pkgSeg = moduleToPackageSeg(module.moduleName, opts.modulePackageMap);
-  const fields = mapFields(msg.fields);
+  const fields = mapFieldsWithStructs(msg.fields, structTypes);
   const fullName = ensurePrefix(msg.name, msg.type);
+  const beanPackage = `${opts.javaBasePackage}.${pkgSeg}.bean`;
   return {
     id: msg.id,
     name: fullName,
@@ -175,6 +215,31 @@ export function buildRenderMessage(
     javaPackage: `${opts.javaBasePackage}.${pkgSeg}.messages`,
     handlerPackage: `${opts.handlerBasePackage}.${pkgSeg}.handler`,
     handlerClassName: `${fullName}Handler`,
+    structImports: fieldStructTypes(fields).map((name) => `${beanPackage}.${name}`),
+    fields,
+    csEncodeLines: genCsEncodeLines(fields),
+    csDecodeLines: genCsDecodeLines(fields),
+    javaWriteLines: genJavaWriteLines(fields),
+    javaReadLines: genJavaReadLines(fields),
+  };
+}
+
+/** 构建单个渲染对象结构 */
+export function buildRenderStruct(
+  struct: StructDef,
+  module: ModuleDef,
+  opts: ResolvedOptions,
+  structTypes: Set<string>,
+): RenderStruct {
+  const pkgSeg = moduleToPackageSeg(module.moduleName, opts.modulePackageMap);
+  const fields = mapFieldsWithStructs(struct.fields, structTypes);
+  return {
+    name: struct.name,
+    desc: struct.desc,
+    fileName: module.fileName,
+    moduleName: module.moduleName,
+    javaClassName: struct.name,
+    javaPackage: `${opts.javaBasePackage}.${pkgSeg}.bean`,
     fields,
     csEncodeLines: genCsEncodeLines(fields),
     csDecodeLines: genCsDecodeLines(fields),
@@ -188,11 +253,13 @@ export function buildRenderModules(
   modules: ModuleDef[],
   opts: ResolvedOptions,
 ): RenderModule[] {
+  const structTypes = new Set(modules.flatMap((m) => (m.structs ?? []).map((struct) => struct.name)));
   return modules.map((m) => ({
     fileName: m.fileName,
     moduleName: m.moduleName,
     desc: m.desc,
-    messages: m.messages.map((msg) => buildRenderMessage(msg, m, opts)),
+    structs: (m.structs ?? []).map((struct) => buildRenderStruct(struct, m, opts, structTypes)),
+    messages: m.messages.map((msg) => buildRenderMessage(msg, m, opts, structTypes)),
   }));
 }
 

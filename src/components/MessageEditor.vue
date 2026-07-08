@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { nextTick, ref, reactive, watch } from "vue";
-import { NButton, NInput, NSelect, NSpace, NText, NPopconfirm, NModal, useMessage } from "naive-ui";
-import type { FieldDef, ModuleDef, MessageDef } from "@/generator/types";
+import { computed, nextTick, ref, reactive, watch } from "vue";
+import { NButton, NInput, NSelect, NSpace, NText, NPopconfirm, NModal, NTabs, NTabPane, useMessage } from "naive-ui";
+import type { FieldDef, ModuleDef, MessageDef, StructDef } from "@/generator/types";
 
 const props = defineProps<{
   module: ModuleDef;
@@ -11,7 +11,7 @@ const props = defineProps<{
 const emit = defineEmits<{ "changed": [mod: ModuleDef] }>();
 const message = useMessage();
 
-const FIELD_TYPES = [
+const BASE_FIELD_TYPES = [
   { label: "int", value: "int" },
   { label: "long", value: "long" },
   { label: "float", value: "float" },
@@ -27,14 +27,30 @@ const MSG_TYPES = [
   { label: "P2S", value: "P2S" },
 ];
 
+function cloneModule(mod: ModuleDef): ModuleDef {
+  return { structs: [], ...JSON.parse(JSON.stringify(mod)) };
+}
+
 // 本地可编辑副本
-const edit = reactive<ModuleDef>(JSON.parse(JSON.stringify(props.module)));
+const edit = reactive<ModuleDef>(cloneModule(props.module));
 let syncingFromProps = false;
+
+const fieldTypeOptions = computed(() => [
+  ...BASE_FIELD_TYPES,
+  ...edit.structs
+    .filter((struct) => struct.name.trim())
+    .map((struct) => ({ label: struct.name, value: struct.name })),
+]);
+
+const FIELD_LIST_OPTIONS = [
+  { label: "单个", value: "single" },
+  { label: "List", value: "list" },
+];
 
 // 仅在切换文件时从 props 重新加载
 watch(() => props.module.fileName, async () => {
   syncingFromProps = true;
-  Object.assign(edit, JSON.parse(JSON.stringify(props.module)));
+  Object.assign(edit, cloneModule(props.module));
   await nextTick();
   syncingFromProps = false;
 });
@@ -48,6 +64,8 @@ watch(
 );
 
 const expandedNames = ref<number[]>([]);
+const expandedStructNames = ref<number[]>([]);
+const activeEditorTab = ref<"structs" | "messages">("structs");
 const rootRef = ref<HTMLElement | null>(null);
 const focusedMessageIndex = ref<number | null>(null);
 const showBatchFieldModal = ref(false);
@@ -60,8 +78,15 @@ function toggleExpand(index: number) {
   else expandedNames.value.push(index);
 }
 
+function toggleStructExpand(index: number) {
+  const pos = expandedStructNames.value.indexOf(index);
+  if (pos >= 0) expandedStructNames.value.splice(pos, 1);
+  else expandedStructNames.value.push(index);
+}
+
 function addMessage() {
   edit.messages.push({ id: 0, name: "", type: "C2S", desc: "", fields: [] });
+  activeEditorTab.value = "messages";
   expandedNames.value.push(edit.messages.length - 1);
 }
 
@@ -73,20 +98,42 @@ function addField(msg: MessageDef) {
   msg.fields.push({ type: "int", name: "", desc: "" });
 }
 
-function removeField(msg: MessageDef, index: number) {
-  msg.fields.splice(index, 1);
+function addStruct() {
+  edit.structs.push({ name: "", desc: "", fields: [] });
+  activeEditorTab.value = "structs";
+  expandedStructNames.value.push(edit.structs.length - 1);
+}
+
+function removeStruct(index: number) {
+  edit.structs.splice(index, 1);
+}
+
+function addStructField(struct: StructDef) {
+  struct.fields.push({ type: "int", name: "", desc: "" });
+}
+
+function removeField(target: MessageDef | StructDef, index: number) {
+  target.fields.splice(index, 1);
 }
 
 function notify() {
   emit("changed", JSON.parse(JSON.stringify(edit)));
 }
 
-function normalizeJavaFieldType(type: string): string {
+function parseListElementType(type: string): string | null {
+  const clean = type.trim();
+  const angleMatch = clean.match(/^(?:array|list|java\.util\.List)<(.+)>$/i);
+  if (angleMatch) return angleMatch[1].trim();
+  const bracketMatch = clean.match(/^(.+)\[\]$/);
+  if (bracketMatch) return bracketMatch[1].trim();
+  return null;
+}
+
+function normalizeTypeName(type: string): string {
   const clean = type
-    .replace(/^java\.lang\./, "")
-    .replace(/^List<(.+)>$/, "array<$1>")
-    .replace(/\s+/g, "")
-    .toLowerCase();
+    .trim()
+    .replace(/^java\.lang\./i, "")
+    .replace(/\s+/g, "");
   const map: Record<string, string> = {
     integer: "int",
     int: "int",
@@ -99,11 +146,33 @@ function normalizeJavaFieldType(type: string): string {
     short: "short",
     byte: "byte",
   };
-  const arrayMatch = clean.match(/^array<(.+)>$/);
-  if (arrayMatch) {
-    return `array<${map[arrayMatch[1]] ?? arrayMatch[1]}>`;
+  return map[clean.toLowerCase()] ?? clean;
+}
+
+function baseFieldType(type: string): string {
+  return normalizeTypeName(parseListElementType(type) ?? type);
+}
+
+function isListField(type: string): boolean {
+  return parseListElementType(type) !== null;
+}
+
+function setFieldBaseType(field: FieldDef, type: string) {
+  const nextType = normalizeTypeName(type);
+  field.type = isListField(field.type) ? `array<${nextType}>` : nextType;
+}
+
+function setFieldListMode(field: FieldDef, mode: string) {
+  const nextType = baseFieldType(field.type);
+  field.type = mode === "list" ? `array<${nextType}>` : nextType;
+}
+
+function normalizeJavaFieldType(type: string): string {
+  const elementType = parseListElementType(type);
+  if (elementType) {
+    return `array<${normalizeTypeName(elementType)}>`;
   }
-  return map[clean] ?? clean;
+  return normalizeTypeName(type);
 }
 
 function parseBatchFields(text: string): FieldDef[] {
@@ -157,6 +226,7 @@ async function focusMessageByName(name: string) {
   if (!expandedNames.value.includes(index)) {
     expandedNames.value.push(index);
   }
+  activeEditorTab.value = "messages";
   focusedMessageIndex.value = index;
   await nextTick();
   const card = rootRef.value?.querySelector<HTMLElement>(`.msg-card[data-message-index="${index}"]`);
@@ -191,48 +261,134 @@ watch(
     </div>
 
     <div class="editor-section msg-list-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <n-text depth="3" style="font-size:12px">消息列表（{{ edit.messages.length }}）</n-text>
-        <n-button size="tiny" type="primary" @click="addMessage">+ 添加消息</n-button>
-      </div>
+      <n-tabs v-model:value="activeEditorTab" type="line" animated class="editor-tabs">
+        <template #suffix>
+          <n-button
+            v-if="activeEditorTab === 'structs'"
+            size="tiny"
+            type="primary"
+            @click="addStruct"
+          >
+            + 添加对象
+          </n-button>
+          <n-button
+            v-else
+            size="tiny"
+            type="primary"
+            @click="addMessage"
+          >
+            + 添加消息
+          </n-button>
+        </template>
 
-      <div v-if="edit.messages.length === 0" class="editor-empty">
-        <n-text depth="3">暂无消息，点击「添加消息」开始</n-text>
-      </div>
+        <n-tab-pane name="structs" :tab="`对象（${edit.structs.length}）`">
+          <div class="tab-list">
+            <div v-if="edit.structs.length === 0" class="editor-empty">
+              <n-text depth="3">暂无对象，可按需添加 Struct</n-text>
+            </div>
 
-      <div
-        v-for="(msg, mi) in edit.messages"
-        :key="mi"
-        class="msg-card"
-        :class="{ focused: focusedMessageIndex === mi }"
-        :data-message-index="mi"
-      >
-        <div class="msg-header" :class="{ expanded: expandedNames.includes(mi) }" @click="toggleExpand(mi)">
-          <span class="msg-expand-icon">{{ expandedNames.includes(mi) ? '▼' : '▶' }}</span>
-          <n-input v-model:value="msg.name" size="tiny" style="width:200px;font-family:monospace" placeholder="消息名" @click.stop />
-          <n-select v-model:value="msg.type" :options="MSG_TYPES" size="tiny" style="width:80px" @click.stop />
-          <n-input v-model:value="msg.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
-          <n-popconfirm @positive-click="removeMessage(mi)">
-            <template #trigger>
-              <n-button size="tiny" type="error" text @click.stop style="min-width:20px">✕</n-button>
-            </template>
-            确定删除此消息？
-          </n-popconfirm>
-        </div>
+            <div
+              v-for="(struct, si) in edit.structs"
+              :key="si"
+              class="msg-card struct-card"
+            >
+              <div class="msg-header" :class="{ expanded: expandedStructNames.includes(si) }" @click="toggleStructExpand(si)">
+                <span class="msg-expand-icon">{{ expandedStructNames.includes(si) ? '▼' : '▶' }}</span>
+                <n-input v-model:value="struct.name" size="tiny" style="width:220px;font-family:monospace" placeholder="对象名" @click.stop />
+                <n-input v-model:value="struct.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
+                <n-popconfirm @positive-click="removeStruct(si)">
+                  <template #trigger>
+                    <n-button size="tiny" type="error" text @click.stop style="min-width:20px">✕</n-button>
+                  </template>
+                  确定删除此对象？
+                </n-popconfirm>
+              </div>
 
-        <div v-if="expandedNames.includes(mi)" class="msg-fields">
-          <div v-for="(f, fi) in msg.fields" :key="fi" class="field-row">
-            <n-select v-model:value="f.type" :options="FIELD_TYPES" size="tiny" style="width:100px" />
-            <n-input v-model:value="f.name" size="tiny" style="width:140px;font-family:monospace" placeholder="字段名" />
-            <n-input v-model:value="f.desc" size="tiny" style="flex:1" placeholder="描述" />
-            <n-button size="tiny" text @click="removeField(msg, fi)" style="min-width:20px;color:#f87171">✕</n-button>
+              <div v-if="expandedStructNames.includes(si)" class="msg-fields">
+                <div v-for="(f, fi) in struct.fields" :key="fi" class="field-row">
+                  <n-select
+                    :value="baseFieldType(f.type)"
+                    :options="fieldTypeOptions"
+                    tag
+                    size="tiny"
+                    style="width:140px"
+                    @update:value="setFieldBaseType(f, String($event))"
+                  />
+                  <n-input v-model:value="f.name" size="tiny" style="width:160px;font-family:monospace" placeholder="字段名" />
+                  <n-select
+                    :value="isListField(f.type) ? 'list' : 'single'"
+                    :options="FIELD_LIST_OPTIONS"
+                    size="tiny"
+                    style="width:86px"
+                    @update:value="setFieldListMode(f, String($event))"
+                  />
+                  <n-input v-model:value="f.desc" size="tiny" style="flex:1" placeholder="描述" />
+                  <n-button size="tiny" text @click="removeField(struct, fi)" style="min-width:20px;color:#f87171">✕</n-button>
+                </div>
+                <div class="field-actions">
+                  <n-button size="tiny" dashed @click="addStructField(struct)">+ 添加字段</n-button>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="field-actions">
-            <n-button size="tiny" dashed @click="addField(msg)">+ 添加字段</n-button>
-            <n-button size="tiny" dashed @click="openBatchFieldModal(msg)">批量添加字段</n-button>
+        </n-tab-pane>
+
+        <n-tab-pane name="messages" :tab="`消息（${edit.messages.length}）`">
+          <div class="tab-list">
+            <div v-if="edit.messages.length === 0" class="editor-empty">
+              <n-text depth="3">暂无消息，点击「添加消息」开始</n-text>
+            </div>
+
+            <div
+              v-for="(msg, mi) in edit.messages"
+              :key="mi"
+              class="msg-card"
+              :class="{ focused: focusedMessageIndex === mi }"
+              :data-message-index="mi"
+            >
+              <div class="msg-header" :class="{ expanded: expandedNames.includes(mi) }" @click="toggleExpand(mi)">
+                <span class="msg-expand-icon">{{ expandedNames.includes(mi) ? '▼' : '▶' }}</span>
+                <n-input v-model:value="msg.name" size="tiny" style="width:200px;font-family:monospace" placeholder="消息名" @click.stop />
+                <n-select v-model:value="msg.type" :options="MSG_TYPES" size="tiny" style="width:80px" @click.stop />
+                <n-input v-model:value="msg.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
+                <n-popconfirm @positive-click="removeMessage(mi)">
+                  <template #trigger>
+                    <n-button size="tiny" type="error" text @click.stop style="min-width:20px">✕</n-button>
+                  </template>
+                  确定删除此消息？
+                </n-popconfirm>
+              </div>
+
+              <div v-if="expandedNames.includes(mi)" class="msg-fields">
+                <div v-for="(f, fi) in msg.fields" :key="fi" class="field-row">
+                  <n-select
+                    :value="baseFieldType(f.type)"
+                    :options="fieldTypeOptions"
+                    tag
+                    size="tiny"
+                    style="width:140px"
+                    @update:value="setFieldBaseType(f, String($event))"
+                  />
+                  <n-input v-model:value="f.name" size="tiny" style="width:160px;font-family:monospace" placeholder="字段名" />
+                  <n-select
+                    :value="isListField(f.type) ? 'list' : 'single'"
+                    :options="FIELD_LIST_OPTIONS"
+                    size="tiny"
+                    style="width:86px"
+                    @update:value="setFieldListMode(f, String($event))"
+                  />
+                  <n-input v-model:value="f.desc" size="tiny" style="flex:1" placeholder="描述" />
+                  <n-button size="tiny" text @click="removeField(msg, fi)" style="min-width:20px;color:#f87171">✕</n-button>
+                </div>
+                <div class="field-actions">
+                  <n-button size="tiny" dashed @click="addField(msg)">+ 添加字段</n-button>
+                  <n-button size="tiny" dashed @click="openBatchFieldModal(msg)">批量添加字段</n-button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </n-tab-pane>
+      </n-tabs>
     </div>
 
     <n-modal v-model:show="showBatchFieldModal" preset="card" title="批量添加字段" style="width: 680px">
@@ -256,11 +412,17 @@ watch(
 </template>
 
 <style scoped>
-.msg-editor { display:flex; flex-direction:column; height:100%; overflow-y:auto; padding:12px; }
-.editor-section { margin-bottom:16px; }
+.msg-editor { display:flex; flex-direction:column; height:100%; overflow:hidden; padding:12px; }
+.editor-section { flex-shrink:0; margin-bottom:16px; }
 .editor-empty { text-align:center; color:#666; padding:24px 0; }
-.msg-list-section { flex:1; min-height:0; overflow-y:auto; }
+.msg-list-section { flex:1; min-height:0; overflow:hidden; margin-bottom:0; }
+.editor-tabs { height:100%; display:flex; flex-direction:column; }
+.editor-tabs :deep(.n-tabs-nav) { flex-shrink:0; }
+.editor-tabs :deep(.n-tab-pane) { height:100%; min-height:0; }
+.editor-tabs :deep(.n-tabs-pane-wrapper) { flex:1; min-height:0; }
+.tab-list { height:100%; overflow-y:auto; padding-right:4px; }
 .msg-card { border:1px solid #333; border-radius:6px; margin-bottom:6px; overflow:hidden; transition:border-color .16s, box-shadow .16s; }
+.struct-card { border-color:#27534f; }
 .msg-card.focused { border-color:#4ade80; box-shadow:0 0 0 1px rgba(74, 222, 128, .35); }
 .msg-header { display:flex; align-items:center; gap:6px; padding:6px 8px; cursor:pointer; background:#252526; }
 .msg-header:hover { background:#2a2a2a; }

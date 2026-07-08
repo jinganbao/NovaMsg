@@ -24,13 +24,31 @@ using GameCore.ProtoCollections;
 
 namespace GameCore.Message
 {
+{{#each structs}}
+	/** {{fileName}} */
+	/** {{desc}} */
+	public class {{name}} : IMessageRaw {
+{{#each fields}}
+		//{{desc}}
+		public {{csType}} {{csName}}{{#if isArray}}=new RepeatedField<{{element.csType}}>(){{else}}{{#if isStruct}}=new {{csType}}(){{else}} {{/if}}{{/if}};
+{{/each}}
+
+		public override void encode(ByteBuffer buf) {
+{{#each csEncodeLines}}{{this}}
+{{/each}}		}
+
+		public override void decode(ByteBuffer buf) {
+{{#each csDecodeLines}}{{this}}
+{{/each}}		}
+	}
+{{/each}}
 {{#each messages}}
 	/** {{fileName}} */
 	/** {{desc}} */
 	public class {{name}} : IMessageRaw {
 {{#each fields}}
 		//{{desc}}
-		public {{csType}} {{csName}}{{#if isArray}}=new RepeatedField<{{element.csType}}>(){{else}} {{/if}};
+		public {{csType}} {{csName}}{{#if isArray}}=new RepeatedField<{{element.csType}}>(){{else}}{{#if isStruct}}=new {{csType}}(){{else}} {{/if}}{{/if}};
 {{/each}}
 
 		public override void encode(ByteBuffer buf) {
@@ -116,13 +134,13 @@ namespace Com.Rilon.Gamebase.Message
 `;
 
 /**
- * 3. Java 实体类 XXXMessage.java（按模块分包，每消息一个文件）
+ * 3. Java 对象类 XXX.java（按模块分包，每对象一个文件）
  */
-export const JAVA_MESSAGE = `package {{javaPackage}};
+export const JAVA_STRUCT = `package {{javaPackage}};
 import io.netty.buffer.ByteBuf;
 import java.util.ArrayList;
 import java.util.List;
-import com.rilon.core.session.message.Message;
+import com.rilon.core.session.message.Bean;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -133,11 +151,11 @@ import lombok.Setter;
  */
 @Getter
 @Setter
-public class {{javaClassName}} extends Message {
+public class {{javaClassName}} extends Bean {
 
 {{#each fields}}
   // {{desc}}
-  private {{javaType}} {{javaName}}{{#if isArray}}= new ArrayList<{{element.javaType}}>(){{else}} {{/if}};
+  private {{javaType}} {{javaName}}{{#if isArray}}= new ArrayList<{{element.javaType}}>(){{else}}{{#if isStruct}}= new {{javaType}}(){{else}} {{/if}}{{/if}};
 {{/each}}
 
   @Override
@@ -156,7 +174,48 @@ public class {{javaClassName}} extends Message {
 `;
 
 /**
- * 4. Java MessageId.java（单文件汇总）
+ * 4. Java 实体类 XXXMessage.java（按模块分包，每消息一个文件）
+ */
+export const JAVA_MESSAGE = `package {{javaPackage}};
+import io.netty.buffer.ByteBuf;
+import java.util.ArrayList;
+import java.util.List;
+import com.rilon.core.session.message.Message;
+{{#each structImports}}import {{this}};
+{{/each}}import lombok.Getter;
+import lombok.Setter;
+
+/**
+ * {{fileName}}
+ * @author : {{author}}
+ * @since : {{desc}}
+ */
+@Getter
+@Setter
+public class {{javaClassName}} extends Message {
+
+{{#each fields}}
+  // {{desc}}
+  private {{javaType}} {{javaName}}{{#if isArray}}= new ArrayList<{{element.javaType}}>(){{else}}{{#if isStruct}}= new {{javaType}}(){{else}} {{/if}}{{/if}};
+{{/each}}
+
+  @Override
+  public boolean write(ByteBuf buf) {
+{{#each javaWriteLines}}{{this}}
+{{/each}}    return true;
+  }
+
+  @Override
+  public boolean read(ByteBuf buf) {
+{{#each javaReadLines}}{{this}}
+{{/each}}    return true;
+  }
+
+}
+`;
+
+/**
+ * 5. Java MessageId.java（单文件汇总）
  *    - 收集所有消息生成常量
  */
 export const MESSAGE_ID_JAVA = `package {{messageIdPackage}};
@@ -213,7 +272,7 @@ public class MessageId {
 `;
 
 /**
- * 5. Java GameHandlerManager.java（单文件汇总）
+ * 6. Java GameHandlerManager.java（单文件汇总）
  *    - 仅对 C2S / P2S 消息生成路由注册
  */
 export const GAME_HANDLER_MANAGER_JAVA = `package {{gameHandlerManagerPackage}};
@@ -265,7 +324,7 @@ public class GameHandlerManager {
 `;
 
 /**
- * 6. Java XXXHandler.java（仅 C2S / P2S，骨架文件）
+ * 7. Java XXXHandler.java（仅 C2S / P2S，骨架文件）
  */
 export const JAVA_HANDLER = `package {{handlerPackage}};
 
@@ -303,6 +362,7 @@ const COMPILE_OPTS = { noEscape: true };
 /** 编译后的模板 */
 export const templates = {
   messageBeansCs: Handlebars.compile(MESSAGE_BEANS_CS, COMPILE_OPTS),
+  javaStruct: Handlebars.compile(JAVA_STRUCT, COMPILE_OPTS),
   messagePoolCs: Handlebars.compile(MESSAGE_POOL_CS, COMPILE_OPTS),
   javaMessage: Handlebars.compile(JAVA_MESSAGE, COMPILE_OPTS),
   messageIdJava: Handlebars.compile(MESSAGE_ID_JAVA, COMPILE_OPTS),

@@ -4,7 +4,7 @@
 
 /** XML 解析后的字段定义 */
 export interface FieldDef {
-  /** 字段类型，如 "int" / "string" / "array" / "array<string>" */
+  /** 字段类型，如 "int" / "string" / "LoginInfo" / "array<LoginInfo>" */
   type: string;
   /** 字段名（PascalCase，如 "ServerCurTime"） */
   name: string;
@@ -29,6 +29,16 @@ export interface MessageDef {
   fields: FieldDef[];
 }
 
+/** XML 解析后的对象结构定义 */
+export interface StructDef {
+  /** 对象名，如 "LoginForChannelTest" */
+  name: string;
+  /** 对象描述 */
+  desc: string;
+  /** 字段列表 */
+  fields: FieldDef[];
+}
+
 /** XML 解析后的模块定义 */
 export interface ModuleDef {
   /** 文件名，如 "login_message.xml" */
@@ -39,6 +49,8 @@ export interface ModuleDef {
   desc: string;
   /** 消息列表 */
   messages: MessageDef[];
+  /** 对象结构列表 */
+  structs: StructDef[];
   /** 原始 XML 内容 */
   rawContent?: string;
 }
@@ -55,6 +67,8 @@ export interface MappedField {
   desc: string;
   /** 是否为数组类型 */
   isArray: boolean;
+  /** 是否为自定义对象类型 */
+  isStruct: boolean;
   /** C# 字段类型，如 "int" / "String" / "RepeatedField<String>" */
   csType: string;
   /** Java 字段类型，如 "int" / "String" / "List<String>" */
@@ -75,7 +89,23 @@ export interface MappedField {
     csRead: string;
     javaWrite: string;
     javaRead: string;
+    isStruct: boolean;
   };
+}
+
+/** 渲染用的对象结构模型 */
+export interface RenderStruct {
+  name: string;
+  desc: string;
+  fileName: string;
+  moduleName: string;
+  javaClassName: string;
+  javaPackage: string;
+  fields: MappedField[];
+  csEncodeLines: string[];
+  csDecodeLines: string[];
+  javaWriteLines: string[];
+  javaReadLines: string[];
 }
 
 /** 渲染用的消息模型 */
@@ -97,6 +127,8 @@ export interface RenderMessage {
   handlerPackage: string;
   /** Java Handler 类名（如 "C2S_CommonHandler"） */
   handlerClassName: string;
+  /** Java 消息类需要导入的 Bean 类 */
+  structImports: string[];
   /** 处理后的字段列表 */
   fields: MappedField[];
   /** C# encode 方法体行（含缩进，不含方法签名） */
@@ -114,6 +146,7 @@ export interface RenderModule {
   fileName: string;
   moduleName: string;
   desc: string;
+  structs: RenderStruct[];
   messages: RenderMessage[];
 }
 

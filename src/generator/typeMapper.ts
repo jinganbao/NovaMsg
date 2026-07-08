@@ -50,15 +50,24 @@ function resolvePrimitive(type: string): BaseTypeMap {
   return PRIMITIVE_TYPE_MAP[key] ?? DEFAULT_TYPE_MAP;
 }
 
+function findStructType(type: string, structTypes: Set<string>): string | null {
+  const clean = type.trim();
+  for (const item of structTypes) {
+    if (item === clean) return item;
+  }
+  return null;
+}
+
 /** 解析数组类型，返回元素类型字符串；若非数组返回 null */
 function parseArrayElement(type: string): string | null {
-  const t = type.trim().toLowerCase();
+  const clean = type.trim();
+  const t = clean.toLowerCase();
   // array<string> / array<int> / list<string>
-  const angleMatch = t.match(/^(?:array|list)<([^>]+)>$/);
-  if (angleMatch) return angleMatch[1];
+  const angleMatch = clean.match(/^(?:array|list)<([^>]+)>$/i);
+  if (angleMatch) return angleMatch[1].trim();
   // string[] / int[]
-  const bracketMatch = type.trim().match(/^([^[]+)\[\]$/);
-  if (bracketMatch) return bracketMatch[1];
+  const bracketMatch = clean.match(/^([^[]+)\[\]$/);
+  if (bracketMatch) return bracketMatch[1].trim();
   // array / list（无显式元素类型，默认 string）
   if (t === "array" || t === "list" || t === "repeated") return "string";
   return null;
@@ -67,7 +76,7 @@ function parseArrayElement(type: string): string | null {
 /**
  * 将单个 FieldDef 映射为渲染用的 MappedField
  */
-export function mapField(field: FieldDef): MappedField {
+export function mapField(field: FieldDef, structTypes = new Set<string>()): MappedField {
   const csName = field.name;
   // Java 字段名：首字母小写
   const javaName = field.name.charAt(0).toLowerCase() + field.name.slice(1);
@@ -76,13 +85,24 @@ export function mapField(field: FieldDef): MappedField {
   const isArray = elementTypeRaw !== null;
 
   if (isArray) {
-    const elem = resolvePrimitive(elementTypeRaw!);
+    const structType = findStructType(elementTypeRaw!, structTypes);
+    const elem = structType
+      ? {
+          cs: structType,
+          java: structType,
+          csWrite: "",
+          csRead: "",
+          javaWrite: "",
+          javaRead: "",
+        }
+      : resolvePrimitive(elementTypeRaw!);
     return {
       name: field.name,
       csName,
       javaName,
       desc: field.desc,
       isArray: true,
+      isStruct: structType !== null,
       csType: `RepeatedField<${elem.cs}>`,
       javaType: `List<${elem.java}>`,
       csWrite: elem.csWrite,
@@ -96,7 +116,26 @@ export function mapField(field: FieldDef): MappedField {
         csRead: elem.csRead,
         javaWrite: elem.javaWrite,
         javaRead: elem.javaRead,
+        isStruct: structType !== null,
       },
+    };
+  }
+
+  const structType = findStructType(field.type, structTypes);
+  if (structType) {
+    return {
+      name: field.name,
+      csName,
+      javaName,
+      desc: field.desc,
+      isArray: false,
+      isStruct: true,
+      csType: structType,
+      javaType: structType,
+      csWrite: "",
+      csRead: "",
+      javaWrite: "",
+      javaRead: "",
     };
   }
 
@@ -107,6 +146,7 @@ export function mapField(field: FieldDef): MappedField {
     javaName,
     desc: field.desc,
     isArray: false,
+    isStruct: false,
     csType: m.cs,
     javaType: m.java,
     csWrite: m.csWrite,
@@ -118,5 +158,10 @@ export function mapField(field: FieldDef): MappedField {
 
 /** 批量映射字段 */
 export function mapFields(fields: FieldDef[]): MappedField[] {
-  return fields.map(mapField);
+  return fields.map((field) => mapField(field));
+}
+
+/** 批量映射字段，支持当前模块内的 Struct 类型 */
+export function mapFieldsWithStructs(fields: FieldDef[], structTypes: Set<string>): MappedField[] {
+  return fields.map((field) => mapField(field, structTypes));
 }
