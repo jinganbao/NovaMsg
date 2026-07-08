@@ -18,6 +18,7 @@ import { generateProtocols, previewProtocols } from "@/generator";
 import type { GenerateOptions, ModuleDef } from "@/generator/types";
 import type { PreviewFile } from "@/generator";
 import { useConfig } from "@/composables/useConfig";
+import { checkAppUpdate } from "@/utils/update";
 import MessageEditor from "@/components/MessageEditor.vue";
 import { Codemirror } from "vue-codemirror-next";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine } from "@codemirror/view";
@@ -140,6 +141,12 @@ const showDeleteModal = ref(false);
 const deletingFile = ref(false);
 const clearingMessageIds = ref(false);
 const clearConfirmText = ref("");
+
+// ---------- 应用更新 ----------
+const checkingUpdate = ref(false);
+const showUpdateModal = ref(false);
+const updateInfo = ref<Awaited<ReturnType<typeof checkAppUpdate>> | null>(null);
+const installingUpdate = ref(false);
 
 function onFileContextMenu(e: MouseEvent, fileName: string) {
   e.preventDefault();
@@ -276,6 +283,36 @@ async function deleteGeneratedProtocolFiles(): Promise<number> {
     }
   }
   return deletedCount;
+}
+
+async function checkForUpdates(options?: { silent?: boolean }) {
+  checkingUpdate.value = true;
+  try {
+    const result = await checkAppUpdate();
+    if (!result.hasUpdate && options?.silent) {
+      return; // 静默模式：无更新不弹窗
+    }
+    updateInfo.value = result;
+    showUpdateModal.value = true;
+  } catch (e) {
+    if (!options?.silent) {
+      message.error("检查更新失败: " + errMsg(e));
+    }
+  } finally {
+    checkingUpdate.value = false;
+  }
+}
+
+async function handleUpdateDownload() {
+  if (!updateInfo.value?.downloadAndInstall) return;
+  installingUpdate.value = true;
+  try {
+    await updateInfo.value.downloadAndInstall();
+  } catch (e) {
+    message.error("安装更新失败: " + errMsg(e));
+  } finally {
+    installingUpdate.value = false;
+  }
 }
 
 async function handleClearMessageIds() {
@@ -675,6 +712,8 @@ onMounted(() => {
   }
   // Ctrl+S / Cmd+S 保存
   document.addEventListener("keydown", onKeyDown);
+  // 启动后静默检查更新（有更新才弹窗）
+  setTimeout(() => checkForUpdates({ silent: true }), 2000);
 });
 onBeforeUnmount(() => {
   document.removeEventListener("keydown", onKeyDown);
@@ -1277,6 +1316,13 @@ function handleGenerate() {
           </div>
         </div>
         <div class="config-divider"></div>
+        <div class="config-modal-row">
+          <n-text class="config-modal-label">应用更新</n-text>
+          <div class="config-modal-input">
+            <n-button size="small" :loading="checkingUpdate" @click="checkForUpdates()">检查更新</n-button>
+          </div>
+        </div>
+        <div class="config-divider"></div>
         <div class="config-modal-row config-modal-row--top">
           <n-text class="config-modal-label">高级操作</n-text>
           <div class="advanced-panel">
@@ -1513,6 +1559,46 @@ function handleGenerate() {
       <template #footer>
         <n-space justify="end">
           <n-button @click="showPreviewModal = false">关闭</n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
+    <!-- 应用更新弹窗 -->
+    <n-modal v-model:show="showUpdateModal" preset="card" title="应用更新" style="width: 480px">
+      <n-spin :show="installingUpdate">
+        <template v-if="updateInfo">
+          <template v-if="updateInfo.hasUpdate">
+            <n-space vertical :size="12">
+              <n-text>
+                发现新版本 <strong>v{{ updateInfo.version }}</strong>（当前 v{{ updateInfo.currentVersion }}）
+              </n-text>
+              <n-text v-if="updateInfo.date" depth="3" style="font-size: 12px">
+                发布日期：{{ updateInfo.date }}
+              </n-text>
+              <div v-if="updateInfo.body" class="update-changelog">
+                <n-text depth="3" style="font-size: 12px; white-space: pre-wrap;">{{ updateInfo.body }}</n-text>
+              </div>
+            </n-space>
+          </template>
+          <template v-else>
+            <n-text>当前已是最新版本 🎉</n-text>
+          </template>
+        </template>
+        <template v-else>
+          <n-text depth="3">正在检查更新...</n-text>
+        </template>
+      </n-spin>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showUpdateModal = false">关闭</n-button>
+          <n-button
+            v-if="updateInfo?.hasUpdate"
+            type="primary"
+            :loading="installingUpdate"
+            @click="handleUpdateDownload"
+          >
+            下载并安装
+          </n-button>
         </n-space>
       </template>
     </n-modal>
@@ -2121,5 +2207,15 @@ function handleGenerate() {
   line-height: 1.5;
   white-space: pre;
   tab-size: 4;
+}
+
+/* ---- 更新日志 ---- */
+.update-changelog {
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
 }
 </style>

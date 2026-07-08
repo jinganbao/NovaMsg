@@ -5,11 +5,7 @@ use tauri::{Manager, RunEvent, WindowEvent};
 
 /// 获取或创建消息 ID（供前端调用）
 #[tauri::command]
-fn get_message_id(
-    store: tauri::State<MessageIdStore>,
-    name: String,
-    msg_type: String,
-) -> i32 {
+fn get_message_id(store: tauri::State<MessageIdStore>, name: String, msg_type: String) -> i32 {
     store.get_or_create_id(&name, &msg_type)
 }
 
@@ -22,6 +18,7 @@ fn clear_message_ids(store: tauri::State<MessageIdStore>) -> Result<usize, Strin
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
