@@ -20,7 +20,7 @@ import type { PreviewFile } from "@/generator";
 import { useConfig } from "@/composables/useConfig";
 import { checkAppUpdate } from "@/utils/update";
 import MessageEditor from "@/components/MessageEditor.vue";
-import { Codemirror } from "vue-codemirror-next";
+import { Codemirror } from "vue-codemirror";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { xml } from "@codemirror/lang-xml";

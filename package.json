@@ -1,6 +1,6 @@
 {
   "name": "NovaMsg",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "verify": "tsx test/verify.ts"
+    "verify": "tsx test/verify.ts",
+    "release": "bash scripts/release.sh"
   },
   "dependencies": {
     "@codemirror/lang-java": "^6.0.2",
@@ -30,7 +31,7 @@
     "handlebars": "^4.7.8",
     "naive-ui": "^2.40.3",
     "vue": "^3.5.13",
-    "vue-codemirror-next": "^6.1.1"
+    "vue-codemirror": "^6.1.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
