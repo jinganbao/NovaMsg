@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="196" y1="128" x2="828" y2="896" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0F766E"/>
+      <stop offset="0.52" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="252" y1="242" x2="772" y2="782" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DFF7FF"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="28" stdDeviation="28" flood-color="#020617" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <rect x="34" y="34" width="956" height="956" rx="196" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="8"/>
+
+  <g filter="url(#softShadow)">
+    <path
+      d="M272 284C272 239.8 307.8 204 352 204H672C716.2 204 752 239.8 752 284V586C752 630.2 716.2 666 672 666H512L374 792C359.6 805.1 336 794.9 336 775.4V662.4C299.5 654.9 272 622.6 272 584V284Z"
+      fill="url(#bubble)"
+    />
+  </g>
+
+  <path
+    d="M392 560V328H460L564 467V328H632V560H564L460 421V560H392Z"
+    fill="#0F172A"
+  />
+
+  <path
+    d="M704 188L727 251L790 274L727 297L704 360L681 297L618 274L681 251L704 188Z"
+    fill="#6EE7B7"
+  />
+  <circle cx="300" cy="246" r="18" fill="#BAE6FD"/>
+  <circle cx="746" cy="690" r="22" fill="#5EEAD4" opacity="0.92"/>
+</svg>
