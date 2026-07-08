@@ -1,7 +1,7 @@
 mod db;
 
 use db::MessageIdStore;
-use tauri::Manager;
+use tauri::{Manager, RunEvent, WindowEvent};
 
 /// 获取或创建消息 ID（供前端调用）
 #[tauri::command]
@@ -21,7 +21,7 @@ fn clear_message_ids(store: tauri::State<MessageIdStore>) -> Result<usize, Strin
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
@@ -32,6 +32,31 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_message_id, clear_message_ids])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| match event {
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" => {
+            api.prevent_close();
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.hide();
+            }
+        }
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen {
+            has_visible_windows: false,
+            ..
+        } => {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }
+        _ => {}
+    });
 }
