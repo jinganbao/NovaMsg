@@ -10,6 +10,7 @@ export interface AppConfig {
   modulePackageMapCommon: string;
   themeAccent: string;
   themeMode: "dark" | "light";
+  autoCheckUpdate: boolean;
 }
 
 const STORAGE_KEY = "NovaMsg-config";
@@ -24,6 +25,7 @@ const defaults: AppConfig = {
   modulePackageMapCommon: "message",
   themeAccent: "#3DD6C6",
   themeMode: "dark",
+  autoCheckUpdate: true,
 };
 
 function loadConfig(): AppConfig {

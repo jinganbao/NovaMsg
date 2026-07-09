@@ -1,15 +1,35 @@
-import {check} from '@tauri-apps/plugin-updater'
-import {relaunch} from '@tauri-apps/plugin-process'
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
-export async function checkAppUpdate() {
-  const update = await check()
+export interface DownloadProgress {
+  downloaded: number;
+  total: number;
+}
+
+export interface UpdateResult {
+  hasUpdate: boolean;
+  version?: string;
+  currentVersion?: string;
+  date?: string;
+  body?: string;
+  /** 取消当前下载（会中断 downloadAndInstall） */
+  cancel: () => void;
+  downloadAndInstall: (onProgress?: (progress: DownloadProgress) => void) => Promise<void>;
+}
+
+export async function checkAppUpdate(): Promise<UpdateResult> {
+  const update: Update | null = await check();
 
   if (!update) {
     return {
       hasUpdate: false,
-      message: '当前已是最新版本'
-    }
+      cancel: () => {},
+      downloadAndInstall: async () => {},
+    };
   }
+
+  let cancelled = false;
+  let accumulatedDownloaded = 0;
 
   return {
     hasUpdate: true,
@@ -17,9 +37,24 @@ export async function checkAppUpdate() {
     currentVersion: update.currentVersion,
     date: update.date,
     body: update.body,
-    downloadAndInstall: async () => {
-      await update.downloadAndInstall()
-      await relaunch()
-    }
-  }
+    cancel: () => {
+      cancelled = true;
+      update.close();
+    },
+    downloadAndInstall: async (onProgress?: (progress: DownloadProgress) => void) => {
+      accumulatedDownloaded = 0;
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          if (event.data.contentLength) {
+            onProgress?.({ downloaded: 0, total: event.data.contentLength });
+          }
+        } else if (event.event === "Progress") {
+          accumulatedDownloaded += event.data.chunkLength;
+          onProgress?.({ downloaded: accumulatedDownloaded, total: 0 });
+        }
+      });
+      if (cancelled) return;
+      await relaunch();
+    },
+  };
 }

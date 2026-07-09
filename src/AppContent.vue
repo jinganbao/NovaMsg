@@ -7,341 +7,106 @@ import {
   NText,
   NModal,
   NSpin,
+  NProgress,
+  NSwitch,
   useMessage,
 } from "naive-ui";
 import { open } from "@tauri-apps/plugin-dialog";
-import { readTextFile, readDir, writeTextFile, remove, rename } from "@tauri-apps/plugin-fs";
-import { parseXmlFiles, parseXmlModule } from "@/utils/xmlParser";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { parseXmlFiles } from "@/utils/xmlParser";
 import { moduleToXml } from "@/utils/xmlSerializer";
-import { generateProtocols, previewProtocols } from "@/generator";
+import { generateProtocols } from "@/generator";
 import type { GenerateOptions, ModuleDef } from "@/generator/types";
-import type { PreviewFile } from "@/generator";
 import { useConfig } from "@/composables/useConfig";
-import { checkAppUpdate } from "@/utils/update";
 import MessageEditor from "@/components/MessageEditor.vue";
 import { Codemirror } from "vue-codemirror";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { xml } from "@codemirror/lang-xml";
-import { java } from "@codemirror/lang-java";
-import { StreamLanguage } from "@codemirror/language";
-import { csharp } from "@codemirror/legacy-modes/mode/clike";
 import { oneDark } from "@codemirror/theme-one-dark";
 
-const message = useMessage();
+import { useTheme } from "@/composables/useTheme";
+import { useAppUpdate } from "@/composables/useAppUpdate";
+import { useValidation } from "@/composables/useValidation";
+import { usePreview } from "@/composables/usePreview";
+import { useFileOps } from "@/composables/useFileOps";
+import { useMessageIds } from "@/composables/useMessageIds";
 
-/** 安全提取错误消息 */
+const message = useMessage();
+const config = useConfig();
+
+// ---------- 错误工具 ----------
 function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e ?? "未知错误");
 }
 
-const parsedModules = ref<ModuleDef[]>([]);
-const parsing = ref(false);
-const parseErrors = ref<{ fileName: string; message: string }[]>([]);
-const showParseErrorModal = ref(false);
+// ---------- 主题 ----------
+const { themePresets, themeModeOptions, themeVars, setThemeMode } = useTheme(config);
 
-// ---------- 新建 XML 文件 ----------
-function escapeXmlAttr(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function getModuleNameFromFileName(fileName: string): string {
-  const trimmed = fileName.trim();
-  return trimmed.endsWith(".xml") ? trimmed.slice(0, -4) : trimmed;
-}
-
-function createEmptyXmlContent(moduleName: string): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Module moduleName="${escapeXmlAttr(moduleName)}">
-</Module>`;
-}
-
-function parseFilesWithErrors(files: { name: string; content: string }[]): ModuleDef[] {
-  const modules: ModuleDef[] = [];
-  const errors: { fileName: string; message: string }[] = [];
-  for (const file of files) {
-    try {
-      const mod = parseXmlModule(file.content);
-      mod.fileName = file.name;
-      mod.rawContent = file.content;
-      modules.push(mod);
-    } catch (e) {
-      errors.push({ fileName: file.name, message: errMsg(e) });
-    }
-  }
-  parseErrors.value = errors;
-  showParseErrorModal.value = errors.length > 0;
-  return modules;
-}
-
-const showNewFileModal = ref(false);
-const newFileName = ref("");
-const creatingFile = ref(false);
-
-function openNewFileModal() {
-  if (!config.xmlPath) {
-    message.warning("请先在配置中设置 XML 目录");
-    return;
-  }
-  newFileName.value = "";
-  showNewFileModal.value = true;
-}
-
-async function handleCreateNewFile() {
-  let name = newFileName.value.trim();
-  if (!name) {
-    message.warning("请输入文件名");
-    return;
-  }
-  if (!name.endsWith(".xml")) {
-    name += ".xml";
-  }
-  const moduleName = getModuleNameFromFileName(name);
-  const content = createEmptyXmlContent(moduleName);
-  const sep = config.xmlPath.endsWith("/") ? "" : "/";
-  const filePath = `${config.xmlPath}${sep}${name}`;
-
-  creatingFile.value = true;
-  try {
-    try {
-      await readTextFile(filePath);
-      message.warning(`文件 ${name} 已存在，请更换文件名`);
-      return;
-    } catch {
-      // 文件不存在，可以创建
-    }
-    await writeTextFile(filePath, content);
-    showNewFileModal.value = false;
-    message.success(`已创建 ${name}`);
-    await loadXmlFromDirectory(config.xmlPath);
-  } catch (e) {
-    message.error("创建文件失败: " + errMsg(e));
-  } finally {
-    creatingFile.value = false;
-  }
-}
-
-// ---------- 右键菜单 & 重命名 / 删除 ----------
-const showContextMenu = ref(false);
-const contextMenuX = ref(0);
-const contextMenuY = ref(0);
-const contextMenuFile = ref<string | null>(null);
-
-const showRenameModal = ref(false);
-const renameFileName = ref("");
-const renamingFile = ref(false);
-
-const showDeleteModal = ref(false);
-const deletingFile = ref(false);
-const clearingMessageIds = ref(false);
-const clearConfirmText = ref("");
+// ---------- 文件操作 ----------
+const {
+  parsedModules,
+  parsing,
+  parseErrors,
+  showParseErrorModal,
+  showNewFileModal,
+  newFileName,
+  creatingFile,
+  showContextMenu,
+  contextMenuX,
+  contextMenuY,
+  contextMenuFile,
+  showRenameModal,
+  renameFileName,
+  renamingFile,
+  showDeleteModal,
+  deletingFile,
+  setActiveFileAccessors,
+  loadXmlFromDirectory,
+  pickXmlDirectoryAndLoad,
+  selectXmlFiles,
+  openNewFileModal,
+  handleCreateNewFile,
+  onFileContextMenu,
+  closeContextMenu,
+  onCtxMenuRename,
+  onCtxMenuDelete,
+  handleRenameFile,
+  handleDeleteFile,
+} = useFileOps(config, message);
 
 // ---------- 应用更新 ----------
-const checkingUpdate = ref(false);
-const showUpdateModal = ref(false);
-const updateInfo = ref<Awaited<ReturnType<typeof checkAppUpdate>> | null>(null);
-const installingUpdate = ref(false);
+const {
+  checkingUpdate,
+  showUpdateModal,
+  updateInfo,
+  installingUpdate,
+  cancellingUpdate,
+  updateDownloaded,
+  updateTotal,
+  updateProgressLabel,
+  updateProgressPercentage,
+  checkForUpdates,
+  handleUpdateDownload,
+  cancelUpdateDownload,
+  autoCheckOnStartup,
+} = useAppUpdate(config, message);
 
-function onFileContextMenu(e: MouseEvent, fileName: string) {
-  e.preventDefault();
-  contextMenuFile.value = fileName;
-  contextMenuX.value = e.clientX;
-  contextMenuY.value = e.clientY;
-  showContextMenu.value = true;
+// ---------- 校验 ----------
+const {
+  showValidationModal,
+  validationIssues,
+  validationErrors,
+  validationWarnings,
+  runValidation: runValidationRaw,
+} = useValidation();
+
+function runValidation(options: { showSuccess?: boolean } = {}): boolean {
+  return runValidationRaw(parsedModules.value, options, message);
 }
 
-function closeContextMenu() {
-  showContextMenu.value = false;
-}
-
-function onCtxMenuRename() {
-  const fileName = contextMenuFile.value;
-  closeContextMenu();
-  if (!fileName) return;
-  renameFileName.value = fileName.endsWith(".xml") ? fileName.slice(0, -4) : fileName;
-  showRenameModal.value = true;
-}
-
-function onCtxMenuDelete() {
-  closeContextMenu();
-  if (!contextMenuFile.value) return;
-  showDeleteModal.value = true;
-}
-
-async function handleRenameFile() {
-  const oldName = contextMenuFile.value;
-  let newName = renameFileName.value.trim();
-  if (!newName || !oldName) return;
-  if (!newName.endsWith(".xml")) {
-    newName += ".xml";
-  }
-  if (newName === oldName) {
-    showRenameModal.value = false;
-    return;
-  }
-  const sep = config.xmlPath.endsWith("/") ? "" : "/";
-  const oldPath = `${config.xmlPath}${sep}${oldName}`;
-  const newPath = `${config.xmlPath}${sep}${newName}`;
-
-  renamingFile.value = true;
-  try {
-    await rename(oldPath, newPath);
-    showRenameModal.value = false;
-    message.success(`已重命名为 ${newName}`);
-    if (activeFile.value === oldName) {
-      activeFile.value = newName;
-    }
-    await loadXmlFromDirectory(config.xmlPath);
-  } catch (e) {
-    message.error("重命名失败: " + errMsg(e));
-  } finally {
-    renamingFile.value = false;
-  }
-}
-
-async function handleDeleteFile() {
-  const fileName = contextMenuFile.value;
-  if (!fileName) return;
-  const sep = config.xmlPath.endsWith("/") ? "" : "/";
-  const filePath = `${config.xmlPath}${sep}${fileName}`;
-
-  deletingFile.value = true;
-  try {
-    await remove(filePath);
-    showDeleteModal.value = false;
-    message.success(`已删除 ${fileName}`);
-    if (activeFile.value === fileName) {
-      activeFile.value = null;
-    }
-    await loadXmlFromDirectory(config.xmlPath);
-  } catch (e) {
-    message.error("删除失败: " + errMsg(e));
-  } finally {
-    deletingFile.value = false;
-  }
-}
-
-function resetLoadedMessageIds() {
-  for (const mod of parsedModules.value) {
-    let changed = false;
-    for (const msg of mod.messages) {
-      if (msg.id !== 0) {
-        msg.id = 0;
-        changed = true;
-      }
-    }
-    if (changed) {
-      mod.rawContent = moduleToXml(mod);
-    }
-  }
-  if (selectedModule.value) {
-    editorContent.value = selectedModule.value.rawContent ?? moduleToXml(selectedModule.value);
-  }
-  isFormDirty.value = parsedModules.value.length > 0;
-}
-
-function buildGenerateOptions(modules: ModuleDef[]): GenerateOptions {
-  const modulePackageMap: Record<string, string> = {};
-  if (config.modulePackageMapCommon) {
-    modulePackageMap["common"] = config.modulePackageMapCommon;
-  }
-  for (const m of modules) {
-    if (!modulePackageMap[m.moduleName]) {
-      modulePackageMap[m.moduleName] = m.moduleName;
-    }
-  }
-  return {
-    author: config.author,
-    javaBasePackage: config.javaBasePackage,
-    handlerBasePackage: config.handlerBasePackage,
-    modulePackageMap,
-  };
-}
-
-async function deleteGeneratedProtocolFiles(): Promise<number> {
-  if (!canGenerate.value) return 0;
-  const result = await previewProtocols(
-    parsedModules.value,
-    config.frontendPath,
-    config.backendPath,
-    buildGenerateOptions(parsedModules.value),
-  );
-  const paths = [...new Set(result.files.map((f) => f.path))];
-  let deletedCount = 0;
-  for (const path of paths) {
-    try {
-      await remove(path);
-      deletedCount += 1;
-    } catch {
-      // 文件可能不存在，忽略即可。
-    }
-  }
-  return deletedCount;
-}
-
-async function checkForUpdates(options?: { silent?: boolean }) {
-  checkingUpdate.value = true;
-  try {
-    const result = await checkAppUpdate();
-    if (!result.hasUpdate && options?.silent) {
-      return; // 静默模式：无更新不弹窗
-    }
-    updateInfo.value = result;
-    showUpdateModal.value = true;
-  } catch (e) {
-    if (!options?.silent) {
-      message.error("检查更新失败: " + errMsg(e));
-    }
-  } finally {
-    checkingUpdate.value = false;
-  }
-}
-
-async function handleUpdateDownload() {
-  if (!updateInfo.value?.downloadAndInstall) return;
-  installingUpdate.value = true;
-  try {
-    await updateInfo.value.downloadAndInstall();
-  } catch (e) {
-    message.error("安装更新失败: " + errMsg(e));
-  } finally {
-    installingUpdate.value = false;
-  }
-}
-
-async function handleClearMessageIds() {
-  clearingMessageIds.value = true;
-  try {
-    const deletedCount = await deleteGeneratedProtocolFiles();
-    resetLoadedMessageIds();
-    // 回写 XML 文件（将 id 清零持久化）
-    const sep = config.xmlPath && !config.xmlPath.endsWith("/") ? "/" : "";
-    for (const mod of parsedModules.value) {
-      if (config.xmlPath) {
-        await writeTextFile(`${config.xmlPath}${sep}${mod.fileName}`, mod.rawContent ?? moduleToXml(mod));
-      }
-    }
-    clearConfirmText.value = "";
-    message.success(`已删除 ${deletedCount} 个生成文件，已清空 XML 中的消息 ID`);
-  } catch (e) {
-    message.error("清空消息 ID 失败: " + errMsg(e));
-  } finally {
-    clearingMessageIds.value = false;
-  }
-}
-
-const editorRef = ref();
-const editorContent = ref("");
-const messageEditorFocusName = ref("");
-const messageEditorFocusTick = ref(0);
-const fileSearchRef = ref();
-const previewSearchRef = ref();
-
+// ---------- 预览 ----------
 const lightEditorTheme = EditorView.theme({
   "&": {
     color: "#17202A",
@@ -366,9 +131,44 @@ const lightEditorTheme = EditorView.theme({
   },
 }, { dark: false });
 
-// ---------- 未保存状态追踪 ----------
+const {
+  showPreviewModal,
+  previewFiles,
+  previewSkipped,
+  previewActiveFile,
+  previewLoading,
+  previewFileSearch,
+  previewContentSearch,
+  previewActiveContent,
+  previewEditorContent,
+  previewActiveName,
+  filteredPreviewFiles,
+  previewSearchMatches,
+  previewEditorExtensions,
+  copyPreviewContent,
+  doPreview: doPreviewRaw,
+  getFileName,
+  getFileDir,
+} = usePreview(config, message, lightEditorTheme);
+
+// ---------- 消息 ID ----------
+const {
+  clearingMessageIds,
+  clearConfirmText,
+  canClearMessageIds,
+  autoAssignIds: autoAssignIdsRaw,
+  handleClearMessageIds: handleClearMessageIdsRaw,
+} = useMessageIds(config, message);
+
+// ---------- 编辑器状态 ----------
+const editorRef = ref();
+const editorContent = ref("");
+const messageEditorFocusName = ref("");
+const messageEditorFocusTick = ref(0);
+const fileSearchRef = ref();
+const previewSearchRef = ref();
+
 const savedContent = ref("");
-// 表单模式用独立标记，避免和 XML 编辑器混用同一套比较逻辑
 const isFormDirty = ref(false);
 const isDirty = computed(() => {
   if (viewMode.value === "form") return isFormDirty.value;
@@ -378,6 +178,86 @@ type PendingAction = { type: "switch"; fileName: string } | { type: "preview" } 
 const pendingAction = ref<PendingAction | null>(null);
 const showUnsavedModal = computed(() => pendingAction.value !== null);
 
+const showConfig = ref(false);
+const fileSearch = ref("");
+
+const activeFile = ref<string | null>(null);
+const viewMode = ref<"form" | "xml">("form");
+
+// 连接文件操作与 activeFile
+setActiveFileAccessors(
+  () => activeFile.value,
+  (v) => { activeFile.value = v; },
+);
+
+const selectedModule = computed(() =>
+  parsedModules.value.find((m) => m.fileName === activeFile.value),
+);
+
+const filteredModules = computed(() => {
+  const keyword = fileSearch.value.trim().toLowerCase();
+  if (!keyword) return parsedModules.value;
+  return parsedModules.value.filter((mod) =>
+    mod.fileName.toLowerCase().includes(keyword) ||
+    mod.moduleName.toLowerCase().includes(keyword),
+  );
+});
+
+const xmlPathLabel = computed(() => {
+  if (!config.xmlPath) return "未选择 XML 目录";
+  const parts = config.xmlPath.split(/[\\/]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : config.xmlPath;
+});
+
+const canGenerate = computed(
+  () => parsedModules.value.length > 0 && !!config.frontendPath && !!config.backendPath,
+);
+
+// ---------- 编辑器扩展 ----------
+const editorExtensions = computed(() => [
+  lineNumbers(),
+  highlightActiveLineGutter(),
+  highlightActiveLine(),
+  history(),
+  xml(),
+  keymap.of([...defaultKeymap, ...historyKeymap]),
+  EditorView.domEventHandlers({
+    dblclick(event, view) {
+      handleXmlDoubleClick(event, view);
+      return false;
+    },
+  }),
+  config.themeMode === "dark" ? oneDark : lightEditorTheme,
+]);
+
+// ---------- 生成选项 ----------
+function buildGenerateOptions(modules: ModuleDef[]): GenerateOptions {
+  const modulePackageMap: Record<string, string> = {};
+  if (config.modulePackageMapCommon) {
+    modulePackageMap["common"] = config.modulePackageMapCommon;
+  }
+  for (const m of modules) {
+    if (!modulePackageMap[m.moduleName]) {
+      modulePackageMap[m.moduleName] = m.moduleName;
+    }
+  }
+  return {
+    author: config.author,
+    javaBasePackage: config.javaBasePackage,
+    handlerBasePackage: config.handlerBasePackage,
+    modulePackageMap,
+  };
+}
+
+// ---------- 消息 ID 分配包装 ----------
+async function autoAssignIds() {
+  await autoAssignIdsRaw(parsedModules.value, selectedModule.value, (xml) => {
+    editorContent.value = xml;
+    savedContent.value = xml;
+  });
+}
+
+// ---------- 保存 ----------
 function getPromptTitle() {
   const a = pendingAction.value;
   if (!a) return "";
@@ -390,7 +270,6 @@ async function saveCurrentFile() {
   if (!activeFile.value || !config.xmlPath) return;
   const sep = config.xmlPath.endsWith("/") ? "" : "/";
   const filePath = `${config.xmlPath}${sep}${activeFile.value}`;
-  // 表单模式：从 ModuleDef 生成 XML
   if (viewMode.value === "form" && selectedModule.value) {
     const xml = moduleToXml(selectedModule.value);
     await writeTextFile(filePath, xml);
@@ -445,6 +324,7 @@ function executeAction(action: PendingAction) {
   }
 }
 
+// ---------- XML 双击跳转 ----------
 function getMessageNameFromXmlLine(lineText: string): string | null {
   const match = lineText.match(/<Message\b[^>]*\bname="([^"]+)"/);
   return match?.[1] ?? null;
@@ -471,208 +351,7 @@ function handleXmlDoubleClick(event: MouseEvent, view: EditorView) {
   }
 }
 
-const editorExtensions = computed(() => [
-  lineNumbers(),
-  highlightActiveLineGutter(),
-  highlightActiveLine(),
-  history(),
-  xml(),
-  keymap.of([...defaultKeymap, ...historyKeymap]),
-  EditorView.domEventHandlers({
-    dblclick(event, view) {
-      handleXmlDoubleClick(event, view);
-      return false;
-    },
-  }),
-  config.themeMode === "dark" ? oneDark : lightEditorTheme,
-]);
-
-/** 从指定目录加载所有 .xml 文件并解析 */
-async function loadXmlFromDirectory(dirPath: string) {
-  if (!dirPath) return;
-  parsing.value = true;
-  try {
-    const entries = await readDir(dirPath);
-    const sep = dirPath.endsWith("/") ? "" : "/";
-    const xmlFiles = entries
-      .filter((e) => e.isFile && e.name.endsWith(".xml"))
-      .map((e) => ({ path: `${dirPath}${sep}${e.name}`, name: e.name }));
-    if (xmlFiles.length === 0) {
-      message.warning(`目录 ${dirPath} 下没有 XML 文件`);
-      return;
-    }
-    const files: { name: string; content: string }[] = [];
-    for (const f of xmlFiles) {
-      const content = await readTextFile(f.path);
-      files.push({ name: f.name, content });
-    }
-    parsedModules.value = parseFilesWithErrors(files);
-    if (parsedModules.value.length > 0) {
-      activeFile.value = parsedModules.value[0].fileName;
-    }
-    if (parseErrors.value.length > 0) {
-      message.warning(`成功加载 ${parsedModules.value.length} 个模块文件，${parseErrors.value.length} 个文件解析失败`);
-    } else {
-      message.success(`成功加载 ${parsedModules.value.length} 个模块文件`);
-    }
-  } catch (e) {
-    message.error("加载失败: " + errMsg(e));
-  } finally {
-    parsing.value = false;
-  }
-}
-
-async function pickXmlDirectoryAndLoad() {
-  const selected = await open({ directory: true });
-  if (!selected) return;
-  config.xmlPath = selected as string;
-  await loadXmlFromDirectory(config.xmlPath);
-}
-
-async function selectXmlFiles() {
-  const selected = await open({
-    multiple: true,
-    filters: [{ name: "XML", extensions: ["xml"] }],
-  });
-  if (!selected) return;
-
-  const paths = Array.isArray(selected) ? selected : [selected];
-  parsing.value = true;
-  try {
-    const files: { name: string; content: string }[] = [];
-    for (const p of paths) {
-      const content = await readTextFile(p);
-      const name = p.split("/").pop() ?? p;
-      files.push({ name, content });
-    }
-    parsedModules.value = parseFilesWithErrors(files);
-    if (parsedModules.value.length > 0) {
-      activeFile.value = parsedModules.value[0].fileName;
-    }
-    if (parseErrors.value.length > 0) {
-      message.warning(`成功解析 ${parsedModules.value.length} 个模块文件，${parseErrors.value.length} 个文件失败`);
-    } else {
-      message.success(`成功解析 ${parsedModules.value.length} 个模块文件`);
-    }
-  } catch (e) {
-    message.error("解析失败: " + errMsg(e));
-  } finally {
-    parsing.value = false;
-  }
-}
-
-const config = useConfig();
-
-const showConfig = ref(false);
-const fileSearch = ref("");
-
-const themePresets = [
-  { name: "NovaMsg", color: "#3DD6C6" },
-  { name: "NovaDB", color: "#5BA8FF" },
-  { name: "NovaFlow", color: "#A3E635" },
-  { name: "NovaOps", color: "#F59E0B" },
-  { name: "NovaAI", color: "#8BDAFF" },
-];
-
-const themeModeOptions = [
-  { label: "暗色", value: "dark" },
-  { label: "亮色", value: "light" },
-];
-
-function setThemeMode(mode: string) {
-  if (mode === "dark" || mode === "light") {
-    config.themeMode = mode;
-  }
-}
-
-function hexToRgb(hex: string) {
-  const normalized = hex.replace("#", "");
-  const value = normalized.length === 3
-    ? normalized.split("").map((char) => char + char).join("")
-    : normalized;
-  const num = Number.parseInt(value, 16);
-  if (Number.isNaN(num)) return { r: 61, g: 214, b: 198 };
-  return {
-    r: (num >> 16) & 255,
-    g: (num >> 8) & 255,
-    b: num & 255,
-  };
-}
-
-function mix(hex: string, target: string, weight: number) {
-  const a = hexToRgb(hex);
-  const b = hexToRgb(target);
-  const channel = (x: number, y: number) => Math.round(x * (1 - weight) + y * weight);
-  return `#${[channel(a.r, b.r), channel(a.g, b.g), channel(a.b, b.b)]
-    .map((part) => part.toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-function rgba(hex: string, alpha: number) {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-const themeVars = computed(() => {
-  const accent = config.themeAccent || "#3DD6C6";
-  const dark = config.themeMode === "dark";
-  return {
-    "--bg-app": dark ? "#111418" : "#F7F9FC",
-    "--bg-sider": dark ? "#15191E" : "#EEF3F7",
-    "--bg-panel": dark ? "#1B2027" : "#FFFFFF",
-    "--bg-panel-hover": dark ? "#222832" : "#EAF0F7",
-    "--bg-input": dark ? "#2A3038" : "#F1F5F9",
-    "--border-subtle": dark ? "#2B323C" : "#D8E0EA",
-    "--border-strong": dark ? "#39424E" : "#BCC8D6",
-    "--text-primary": dark ? "#E7ECF3" : "#17202A",
-    "--text-secondary": dark ? "#9AA5B5" : "#5D6978",
-    "--text-muted": dark ? "#6F7A89" : "#7B8797",
-    "--brand": accent,
-    "--brand-hover": mix(accent, "#FFFFFF", 0.18),
-    "--brand-active": mix(accent, "#000000", 0.18),
-    "--brand-soft": rgba(accent, dark ? 0.14 : 0.12),
-    "--focus": dark ? "#7DD3FC" : "#0284C7",
-    "--danger": dark ? "#F87171" : "#DC2626",
-    "--warning": dark ? "#FBBF24" : "#B7791F",
-    "--success": dark ? "#4ADE80" : "#15803D",
-    "--danger-soft": dark ? "rgba(248, 113, 113, 0.12)" : "rgba(220, 38, 38, 0.08)",
-    "--shadow-strong": dark ? "rgba(0, 0, 0, 0.6)" : "rgba(15, 23, 42, 0.16)",
-    "--swatch-ring": dark ? "rgba(255, 255, 255, 0.08)" : "rgba(15, 23, 42, 0.12)",
-  };
-});
-
-const filteredModules = computed(() => {
-  const keyword = fileSearch.value.trim().toLowerCase();
-  if (!keyword) return parsedModules.value;
-  return parsedModules.value.filter((mod) =>
-    mod.fileName.toLowerCase().includes(keyword) ||
-    mod.moduleName.toLowerCase().includes(keyword),
-  );
-});
-
-const xmlPathLabel = computed(() => {
-  if (!config.xmlPath) return "未选择 XML 目录";
-  const parts = config.xmlPath.split(/[\\/]/).filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : config.xmlPath;
-});
-
-const canClearMessageIds = computed(() => clearConfirmText.value.trim() === "CLEAR");
-
-watch(themeVars, (vars) => {
-  for (const [key, value] of Object.entries(vars)) {
-    document.documentElement.style.setProperty(key, value);
-  }
-}, { immediate: true });
-
-async function pickDirectory(field: "xmlPath" | "backendPath" | "frontendPath") {
-  const selected = await open({ directory: true });
-  if (!selected) return;
-  config[field] = selected as string;
-}
-
-const activeFile = ref<string | null>(null);
-const viewMode = ref<"form" | "xml">("form");
-
+// ---------- 视图模式 ----------
 function setViewMode(mode: "form" | "xml") {
   if (mode === viewMode.value) return;
   if (mode === "xml" && selectedModule.value) {
@@ -684,7 +363,6 @@ function setViewMode(mode: "form" | "xml") {
 }
 
 function onFormChanged(mod: ModuleDef) {
-  // 原地合并到 parsedModules 中的现有对象，不替换引用
   const existing = parsedModules.value.find((m) => m.fileName === mod.fileName);
   if (existing) {
     existing.moduleName = mod.moduleName;
@@ -695,65 +373,14 @@ function onFormChanged(mod: ModuleDef) {
   isFormDirty.value = true;
 }
 
-const selectedModule = computed(() =>
-  parsedModules.value.find((m) => m.fileName === activeFile.value),
-);
-
-watch(selectedModule, (mod) => {
-  if (mod && mod.rawContent) {
-    editorContent.value = mod.rawContent;
-    savedContent.value = mod.rawContent;
-  } else {
-    editorContent.value = "";
-    savedContent.value = "";
-  }
-  isFormDirty.value = false;
-}, { immediate: true });
-
-// 应用启动时自动加载 xmlPath 下的文件
-onMounted(() => {
-  if (config.xmlPath) {
-    loadXmlFromDirectory(config.xmlPath);
-  }
-  // Ctrl+S / Cmd+S 保存
-  document.addEventListener("keydown", onKeyDown);
-  // 启动后静默检查更新（有更新才弹窗）
-  setTimeout(() => checkForUpdates({ silent: true }), 2000);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener("keydown", onKeyDown);
-});
-
-function onKeyDown(e: KeyboardEvent) {
-  const modifier = e.ctrlKey || e.metaKey;
-  if (!modifier) return;
-  const key = e.key.toLowerCase();
-  if (key === "s") {
-    e.preventDefault();
-    if (activeFile.value) saveCurrentFile();
-  } else if (key === "p") {
-    e.preventDefault();
-    handlePreview();
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    handleGenerate();
-  } else if (key === "f") {
-    e.preventDefault();
-    if (showPreviewModal.value) {
-      previewSearchRef.value?.focus?.();
-    } else {
-      fileSearchRef.value?.focus?.();
-    }
-  }
+// ---------- 目录选择 ----------
+async function pickDirectory(field: "xmlPath" | "backendPath" | "frontendPath") {
+  const selected = await open({ directory: true });
+  if (!selected) return;
+  config[field] = selected as string;
 }
 
-// 配置弹窗关闭时，若 xmlPath 有值且当前没有已加载文件，则自动加载
-watch(showConfig, (show, prev) => {
-  if (prev && !show && config.xmlPath) {
-    loadXmlFromDirectory(config.xmlPath);
-  }
-});
-
+// ---------- 文件选择 ----------
 function handleFileSelect(fileName: string) {
   if (isDirty.value && fileName !== activeFile.value) {
     pendingAction.value = { type: "switch", fileName };
@@ -763,197 +390,7 @@ function handleFileSelect(fileName: string) {
   isFormDirty.value = false;
 }
 
-const canGenerate = computed(
-  () => parsedModules.value.length > 0 && !!config.frontendPath && !!config.backendPath,
-);
-
-type ValidationIssue = {
-  level: "error" | "warning";
-  fileName: string;
-  target: string;
-  message: string;
-};
-
-const showValidationModal = ref(false);
-const validationIssues = ref<ValidationIssue[]>([]);
-const validationErrors = computed(() => validationIssues.value.filter((issue) => issue.level === "error"));
-const validationWarnings = computed(() => validationIssues.value.filter((issue) => issue.level === "warning"));
-
-const primitiveTypeSet = new Set(["int", "long", "float", "double", "string", "boolean", "short", "byte"]);
-const javaKeywordSet = new Set([
-  "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const", "continue", "default",
-  "do", "double", "else", "enum", "extends", "final", "finally", "float", "for", "goto", "if", "implements", "import",
-  "instanceof", "int", "interface", "long", "native", "new", "package", "private", "protected", "public", "return",
-  "short", "static", "strictfp", "super", "switch", "synchronized", "this", "throw", "throws", "transient", "try",
-  "void", "volatile", "while",
-]);
-const csharpKeywordSet = new Set([
-  "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const", "continue",
-  "decimal", "default", "delegate", "do", "double", "else", "enum", "event", "explicit", "extern", "false", "finally",
-  "fixed", "float", "for", "foreach", "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock",
-  "long", "namespace", "new", "null", "object", "operator", "out", "override", "params", "private", "protected",
-  "public", "readonly", "ref", "return", "sbyte", "sealed", "short", "sizeof", "stackalloc", "static", "string",
-  "struct", "switch", "this", "throw", "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort",
-  "using", "virtual", "void", "volatile", "while",
-]);
-
-function parseListElementType(type: string): string | null {
-  const clean = type.trim();
-  const angleMatch = clean.match(/^(?:array|list|java\.util\.List)<(.+)>$/i);
-  if (angleMatch) return angleMatch[1].trim();
-  const bracketMatch = clean.match(/^(.+)\[\]$/);
-  if (bracketMatch) return bracketMatch[1].trim();
-  return null;
-}
-
-function normalizeFieldType(type: string): string {
-  const clean = (parseListElementType(type) ?? type).trim().replace(/^java\.lang\./i, "").replace(/\s+/g, "");
-  const map: Record<string, string> = {
-    integer: "int",
-    int: "int",
-    long: "long",
-    float: "float",
-    double: "double",
-    string: "string",
-    boolean: "boolean",
-    bool: "boolean",
-    short: "short",
-    byte: "byte",
-  };
-  return map[clean.toLowerCase()] ?? clean;
-}
-
-function isIdentifier(value: string): boolean {
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
-}
-
-function lowerFirst(value: string): string {
-  return value ? value.charAt(0).toLowerCase() + value.slice(1) : value;
-}
-
-function upperFirst(value: string): string {
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
-}
-
-function addDuplicateIssues(
-  issues: ValidationIssue[],
-  fileName: string,
-  target: string,
-  fields: { name: string }[],
-) {
-  const seen = new Set<string>();
-  const duplicated = new Set<string>();
-  for (const field of fields) {
-    const name = field.name.trim();
-    if (!name) continue;
-    if (seen.has(name)) duplicated.add(name);
-    seen.add(name);
-  }
-  for (const name of duplicated) {
-    issues.push({ level: "error", fileName, target, message: `字段名重复：${name}` });
-  }
-}
-
-function validateModules(modules: ModuleDef[]): ValidationIssue[] {
-  const issues: ValidationIssue[] = [];
-
-  for (const mod of modules) {
-    const fileName = mod.fileName || "未命名文件";
-    const structNames = new Set((mod.structs ?? []).map((struct) => struct.name.trim()).filter(Boolean));
-    const seenStructNames = new Set<string>();
-    const seenMessageNames = new Set<string>();
-
-    if (!mod.moduleName.trim()) {
-      issues.push({ level: "error", fileName, target: "模块", message: "模块名不能为空" });
-    }
-
-    for (const struct of mod.structs ?? []) {
-      const target = `对象 ${struct.name || "未命名对象"}`;
-      const name = struct.name.trim();
-      if (!name) issues.push({ level: "error", fileName, target, message: "对象名不能为空" });
-      else {
-        if (seenStructNames.has(name)) issues.push({ level: "error", fileName, target, message: `对象名重复：${name}` });
-        seenStructNames.add(name);
-        if (!isIdentifier(name)) issues.push({ level: "error", fileName, target, message: "对象名不是合法 Java/C# 标识符" });
-        if (javaKeywordSet.has(name) || csharpKeywordSet.has(name)) issues.push({ level: "error", fileName, target, message: "对象名不能使用 Java/C# 关键字" });
-      }
-      addDuplicateIssues(issues, fileName, target, struct.fields);
-      for (const field of struct.fields) {
-        validateField(issues, fileName, target, field, structNames);
-      }
-    }
-
-    for (const msg of mod.messages) {
-      const target = `消息 ${msg.type}_${msg.name || "未命名消息"}`;
-      const name = msg.name.trim();
-      if (!name) issues.push({ level: "error", fileName, target, message: "消息名不能为空" });
-      else {
-        const fullName = msg.name.startsWith(msg.type + "_") ? msg.name : `${msg.type}_${msg.name}`;
-        if (seenMessageNames.has(fullName)) issues.push({ level: "error", fileName, target, message: `消息名重复：${fullName}` });
-        seenMessageNames.add(fullName);
-        if (!isIdentifier(name)) issues.push({ level: "error", fileName, target, message: "消息名不是合法 Java/C# 标识符" });
-        if (javaKeywordSet.has(name) || csharpKeywordSet.has(name)) issues.push({ level: "error", fileName, target, message: "消息名不能使用 Java/C# 关键字" });
-      }
-      if (!["C2S", "S2C", "S2P", "P2S"].includes(msg.type)) {
-        issues.push({ level: "error", fileName, target, message: `未知消息方向：${msg.type}` });
-      }
-      addDuplicateIssues(issues, fileName, target, msg.fields);
-      for (const field of msg.fields) {
-        validateField(issues, fileName, target, field, structNames);
-      }
-    }
-  }
-
-  return issues;
-}
-
-function validateField(
-  issues: ValidationIssue[],
-  fileName: string,
-  target: string,
-  field: { type: string; name: string },
-  structNames: Set<string>,
-) {
-  const name = field.name.trim();
-  if (!name) {
-    issues.push({ level: "error", fileName, target, message: "字段名不能为空" });
-  } else {
-    if (!isIdentifier(name)) issues.push({ level: "error", fileName, target, message: `字段名不是合法标识符：${name}` });
-    const javaName = lowerFirst(name);
-    const csharpName = upperFirst(name);
-    if (javaKeywordSet.has(javaName)) {
-      issues.push({ level: "error", fileName, target, message: `字段名生成到 Java 后是关键字：${javaName}` });
-    }
-    if (csharpKeywordSet.has(csharpName)) {
-      issues.push({ level: "error", fileName, target, message: `字段名生成到 C# 后是关键字：${csharpName}` });
-    }
-  }
-  const type = normalizeFieldType(field.type);
-  if (!type) {
-    issues.push({ level: "error", fileName, target, message: `字段 ${name || "未命名字段"} 类型不能为空` });
-  } else if (!primitiveTypeSet.has(type) && !structNames.has(type)) {
-    issues.push({ level: "error", fileName, target, message: `字段 ${name || "未命名字段"} 引用了不存在的对象类型：${type}` });
-  }
-}
-
-function runValidation(options: { showSuccess?: boolean } = {}): boolean {
-  validationIssues.value = validateModules(parsedModules.value);
-  if (validationIssues.value.length > 0) {
-    showValidationModal.value = true;
-  }
-  if (validationErrors.value.length > 0) {
-    message.error(`发现 ${validationErrors.value.length} 个协议错误，请先修复`);
-    return false;
-  }
-  if (options.showSuccess) {
-    message.success(validationWarnings.value.length > 0
-      ? `校验通过，有 ${validationWarnings.value.length} 个提醒`
-      : "校验通过");
-  }
-  return true;
-}
-
-/** 用编辑器最新内容重新解析当前模块，保证 messages/fields 是最新的 */
+// ---------- 重新解析当前模块 ----------
 function refreshActiveModule() {
   const mod = selectedModule.value;
   if (!mod || !mod.rawContent) return;
@@ -964,64 +401,7 @@ function refreshActiveModule() {
   }
 }
 
-/** 消息 ID 分配区间（与原 db.rs 保持一致） */
-const ID_RANGES: Record<string, [number, number]> = {
-  S2P: [1000, 4999],
-  P2S: [5000, 9999],
-  C2S: [10000, 19999],
-  S2C: [20000, 29999],
-};
-
-/**
- * 为所有 id==0 的消息分配稳定 ID（按类型分区间）。
- * ID 直接写入 XML 文件，确保多人协作时一致。
- */
-async function autoAssignIds() {
-  // 1. 收集各类型当前已使用的最大 ID
-  const maxByType: Record<string, number> = {};
-  for (const mod of parsedModules.value) {
-    for (const msg of mod.messages) {
-      if (msg.id > 0 && ID_RANGES[msg.type]) {
-        if (!maxByType[msg.type] || msg.id > maxByType[msg.type]) {
-          maxByType[msg.type] = msg.id;
-        }
-      }
-    }
-  }
-
-  // 2. 为 id==0 的消息分配新 ID
-  const changedModules = new Set<ModuleDef>();
-  for (const mod of parsedModules.value) {
-    for (const msg of mod.messages) {
-      if (msg.id !== 0) continue;
-      const range = ID_RANGES[msg.type];
-      if (!range) continue;
-      const [minId, maxId] = range;
-      const nextId = (maxByType[msg.type] ?? minId - 1) + 1;
-      if (nextId > maxId) continue;
-      msg.id = nextId;
-      maxByType[msg.type] = nextId;
-      changedModules.add(mod);
-    }
-  }
-
-  // 3. 回写 XML 文件
-  if (changedModules.size > 0) {
-    const sep = config.xmlPath && !config.xmlPath.endsWith("/") ? "/" : "";
-    for (const mod of changedModules) {
-      mod.rawContent = moduleToXml(mod);
-      if (config.xmlPath) {
-        await writeTextFile(`${config.xmlPath}${sep}${mod.fileName}`, mod.rawContent);
-      }
-    }
-    if (selectedModule.value && changedModules.has(selectedModule.value)) {
-      const xml = selectedModule.value.rawContent ?? moduleToXml(selectedModule.value);
-      editorContent.value = xml;
-      savedContent.value = xml;
-    }
-  }
-}
-
+// ---------- 生成 ----------
 async function doGenerate() {
   if (!canGenerate.value) {
     message.warning("请先完成路径配置");
@@ -1049,135 +429,16 @@ async function doGenerate() {
 }
 
 // ---------- 预览 ----------
-const showPreviewModal = ref(false);
-const previewFiles = ref<PreviewFile[]>([]);
-const previewSkipped = ref<string[]>([]);
-const previewActiveFile = ref("");
-const previewLoading = ref(false);
-const previewFileSearch = ref("");
-const previewContentSearch = ref("");
-
-const previewActiveContent = computed(() => {
-  const f = previewFiles.value.find((p) => p.path === previewActiveFile.value);
-  return f?.content ?? "";
-});
-const previewEditorContent = computed({
-  get: () => previewActiveContent.value,
-  set: () => {},
-});
-
-const previewActiveName = computed(() => getFileName(previewActiveFile.value));
-const filteredPreviewFiles = computed(() => {
-  const keyword = previewFileSearch.value.trim().toLowerCase();
-  if (!keyword) return previewFiles.value;
-  return previewFiles.value.filter((file) =>
-    getFileName(file.path).toLowerCase().includes(keyword) ||
-    file.path.toLowerCase().includes(keyword),
-  );
-});
-const previewSearchMatches = computed(() => {
-  const keyword = previewContentSearch.value;
-  if (!keyword || !previewActiveContent.value) return 0;
-  let count = 0;
-  let index = 0;
-  const lowerContent = previewActiveContent.value.toLowerCase();
-  const lowerKeyword = keyword.toLowerCase();
-  while (true) {
-    index = lowerContent.indexOf(lowerKeyword, index);
-    if (index < 0) break;
-    count += 1;
-    index += Math.max(lowerKeyword.length, 1);
-  }
-  return count;
-});
-const previewEditorExtensions = computed(() => {
-  const ext = [
-    lineNumbers(),
-    highlightActiveLineGutter(),
-    highlightActiveLine(),
-    EditorView.editable.of(false),
-    EditorView.lineWrapping,
-  ];
-  if (previewActiveFile.value.endsWith(".xml")) ext.push(xml());
-  else if (previewActiveFile.value.endsWith(".java")) ext.push(java());
-  else if (previewActiveFile.value.endsWith(".cs")) ext.push(StreamLanguage.define(csharp));
-  ext.push(config.themeMode === "dark" ? oneDark : lightEditorTheme);
-  return ext;
-});
-
-function getFileName(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
-}
-
-function getFileDir(path: string): string {
-  const parts = path.split(/[\\/]/);
-  parts.pop();
-  return parts.join("/");
-}
-
-async function copyPreviewContent() {
-  const content = previewActiveContent.value;
-  if (!content) {
-    message.warning("当前文件没有可复制的内容");
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(content);
-    message.success(`已复制 ${previewActiveName.value || "当前文件"}`);
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = content;
-    textarea.style.position = "fixed";
-    textarea.style.left = "-9999px";
-    document.body.appendChild(textarea);
-    textarea.select();
-    const copied = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    if (copied) {
-      message.success(`已复制 ${previewActiveName.value || "当前文件"}`);
-    } else {
-      message.error("复制失败，请手动复制");
-    }
-  }
-}
-
 async function doPreview() {
-  if (!selectedModule.value) {
-    message.warning("请先在左侧选择一个文件");
-    return;
-  }
-  if (!canGenerate.value) {
-    message.warning("请先完成路径配置");
-    return;
-  }
-  if (!runValidation()) return;
-  await autoAssignIds();
-  if (!runValidation()) return;
-  const mod = selectedModule.value!;
-  previewLoading.value = true;
-  showPreviewModal.value = true;
-  previewFiles.value = [];
-  previewSkipped.value = [];
-  previewActiveFile.value = "";
-  try {
-    const modulesToPreview = [mod];
-    const result = await previewProtocols(
-      modulesToPreview,
-      config.frontendPath,
-      config.backendPath,
-      buildGenerateOptions(modulesToPreview),
-    );
-    previewFiles.value = result.files;
-    previewSkipped.value = result.skippedHandlerFiles;
-    if (result.files.length > 0) {
-      previewActiveFile.value = result.files[0].path;
-    }
-  } catch (e) {
-    message.error("预览失败: " + errMsg(e));
-    showPreviewModal.value = false;
-  } finally {
-    previewLoading.value = false;
-  }
+  await doPreviewRaw(
+    selectedModule.value,
+    canGenerate.value,
+    config.frontendPath,
+    config.backendPath,
+    buildGenerateOptions,
+    runValidation,
+    autoAssignIds,
+  );
 }
 
 function handlePreview() {
@@ -1189,6 +450,73 @@ function handleGenerate() {
   if (isDirty.value) { pendingAction.value = { type: "generate" }; return; }
   doGenerate();
 }
+
+// ---------- 清空消息 ID ----------
+async function handleClearMessageIds() {
+  await handleClearMessageIdsRaw(
+    parsedModules.value,
+    selectedModule.value,
+    (xml) => {
+      editorContent.value = xml;
+      savedContent.value = xml;
+    },
+    canGenerate.value,
+    buildGenerateOptions,
+  );
+}
+
+// ---------- 快捷键 ----------
+function onKeyDown(e: KeyboardEvent) {
+  const modifier = e.ctrlKey || e.metaKey;
+  if (!modifier) return;
+  const key = e.key.toLowerCase();
+  if (key === "s") {
+    e.preventDefault();
+    if (activeFile.value) saveCurrentFile();
+  } else if (key === "p") {
+    e.preventDefault();
+    handlePreview();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    handleGenerate();
+  } else if (key === "f") {
+    e.preventDefault();
+    if (showPreviewModal.value) {
+      previewSearchRef.value?.focus?.();
+    } else {
+      fileSearchRef.value?.focus?.();
+    }
+  }
+}
+
+// ---------- 生命周期 ----------
+watch(selectedModule, (mod) => {
+  if (mod && mod.rawContent) {
+    editorContent.value = mod.rawContent;
+    savedContent.value = mod.rawContent;
+  } else {
+    editorContent.value = "";
+    savedContent.value = "";
+  }
+  isFormDirty.value = false;
+}, { immediate: true });
+
+onMounted(() => {
+  if (config.xmlPath) {
+    loadXmlFromDirectory(config.xmlPath);
+  }
+  document.addEventListener("keydown", onKeyDown);
+  autoCheckOnStartup();
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onKeyDown);
+});
+
+watch(showConfig, (show, prev) => {
+  if (prev && !show && config.xmlPath) {
+    loadXmlFromDirectory(config.xmlPath);
+  }
+});
 </script>
 
 <template>
@@ -1368,8 +696,10 @@ function handleGenerate() {
         <div class="config-divider"></div>
         <div class="config-modal-row">
           <n-text class="config-modal-label">应用更新</n-text>
-          <div class="config-modal-input">
+          <div class="config-modal-input" style="display:flex;align-items:center;gap:12px">
             <n-button size="small" :loading="checkingUpdate" @click="checkForUpdates()">检查更新</n-button>
+            <n-switch v-model:value="config.autoCheckUpdate" size="small" />
+            <span style="font-size:12px;color:var(--text-muted)">启动时自动检查</span>
           </div>
         </div>
         <div class="config-divider"></div>
@@ -1615,8 +945,26 @@ function handleGenerate() {
 
     <!-- 应用更新弹窗 -->
     <n-modal v-model:show="showUpdateModal" preset="card" title="应用更新" style="width: 480px">
-      <n-spin :show="installingUpdate">
-        <template v-if="updateInfo">
+      <n-spin :show="checkingUpdate && !updateInfo">
+        <template v-if="installingUpdate">
+          <n-space vertical :size="16">
+            <n-text>{{ updateProgressLabel }}</n-text>
+            <n-progress
+              v-if="updateTotal > 0"
+              type="line"
+              :percentage="updateProgressPercentage"
+              :show-indicator="true"
+            />
+            <n-progress
+              v-else
+              type="line"
+              :show-indicator="false"
+              status="info"
+              processing
+            />
+          </n-space>
+        </template>
+        <template v-else-if="updateInfo">
           <template v-if="updateInfo.hasUpdate">
             <n-space vertical :size="12">
               <n-text>
@@ -1640,15 +988,19 @@ function handleGenerate() {
       </n-spin>
       <template #footer>
         <n-space justify="end">
-          <n-button @click="showUpdateModal = false">关闭</n-button>
-          <n-button
-            v-if="updateInfo?.hasUpdate"
-            type="primary"
-            :loading="installingUpdate"
-            @click="handleUpdateDownload"
-          >
-            下载并安装
-          </n-button>
+          <template v-if="installingUpdate">
+            <n-button :loading="cancellingUpdate" @click="cancelUpdateDownload">取消下载</n-button>
+          </template>
+          <template v-else>
+            <n-button @click="showUpdateModal = false">关闭</n-button>
+            <n-button
+              v-if="updateInfo?.hasUpdate"
+              type="primary"
+              @click="handleUpdateDownload"
+            >
+              下载并安装
+            </n-button>
+          </template>
         </n-space>
       </template>
     </n-modal>
@@ -2244,6 +1596,11 @@ function handleGenerate() {
 }
 .preview-code-editor :deep(.cm-scroller) {
   overflow: auto;
+}
+.preview-code-editor :deep(.cm-gutters) {
+  background-color: var(--bg-panel);
+  color: var(--text-secondary);
+  border-right-color: var(--border-subtle);
 }
 .preview-code {
   flex: 1;
