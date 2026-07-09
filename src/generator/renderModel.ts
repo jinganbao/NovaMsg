@@ -108,13 +108,13 @@ function genJavaReadLines(fields: MappedField[]): string[] {
       lines.push(`${S4}this.${f.javaName} = new ArrayList<${f.element!.javaType}>();`);
       lines.push(`${S4}for (int i = 0; i < ${f.javaName}_length; i++) {`);
       if (f.element?.isStruct) {
-        lines.push(`${S8}this.${f.javaName}.add(readBean(buf, ${f.element.javaType}.class));`);
+        lines.push(`${S8}this.${f.javaName}.add((${f.element.javaType}) readBean(buf, ${f.element.javaType}.class));`);
       } else {
         lines.push(`${S8}this.${f.javaName}.add(${f.javaRead}(buf));`);
       }
       lines.push(`${S4}}`);
     } else if (f.isStruct) {
-      lines.push(`${S4}this.${f.javaName} = readBean(buf, ${f.javaType}.class);`);
+      lines.push(`${S4}this.${f.javaName} = (${f.javaType}) readBean(buf, ${f.javaType}.class);`);
     } else {
       lines.push(`${S4}this.${f.javaName} = ${f.javaRead}(buf);`);
     }
