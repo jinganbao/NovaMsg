@@ -11,7 +11,6 @@ import {
 } from "naive-ui";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile, readDir, writeTextFile, remove, rename } from "@tauri-apps/plugin-fs";
-import { invoke } from "@tauri-apps/api/core";
 import { parseXmlFiles, parseXmlModule } from "@/utils/xmlParser";
 import { moduleToXml } from "@/utils/xmlSerializer";
 import { generateProtocols, previewProtocols } from "@/generator";
@@ -319,10 +318,16 @@ async function handleClearMessageIds() {
   clearingMessageIds.value = true;
   try {
     const deletedCount = await deleteGeneratedProtocolFiles();
-    const count = await invoke<number>("clear_message_ids");
     resetLoadedMessageIds();
+    // 回写 XML 文件（将 id 清零持久化）
+    const sep = config.xmlPath && !config.xmlPath.endsWith("/") ? "/" : "";
+    for (const mod of parsedModules.value) {
+      if (config.xmlPath) {
+        await writeTextFile(`${config.xmlPath}${sep}${mod.fileName}`, mod.rawContent ?? moduleToXml(mod));
+      }
+    }
     clearConfirmText.value = "";
-    message.success(`已删除 ${deletedCount} 个生成文件，清空 ${count} 条本地消息 ID，当前 XML 的 ID 已重置为 0`);
+    message.success(`已删除 ${deletedCount} 个生成文件，已清空 XML 中的消息 ID`);
   } catch (e) {
     message.error("清空消息 ID 失败: " + errMsg(e));
   } finally {
@@ -959,15 +964,60 @@ function refreshActiveModule() {
   }
 }
 
-/** 通过 SQLite 为消息分配稳定 ID（按类型分区间，同名消息 ID 不变） */
+/** 消息 ID 分配区间（与原 db.rs 保持一致） */
+const ID_RANGES: Record<string, [number, number]> = {
+  S2P: [1000, 4999],
+  P2S: [5000, 9999],
+  C2S: [10000, 19999],
+  S2C: [20000, 29999],
+};
+
+/**
+ * 为所有 id==0 的消息分配稳定 ID（按类型分区间）。
+ * ID 直接写入 XML 文件，确保多人协作时一致。
+ */
 async function autoAssignIds() {
+  // 1. 收集各类型当前已使用的最大 ID
+  const maxByType: Record<string, number> = {};
   for (const mod of parsedModules.value) {
     for (const msg of mod.messages) {
-      const fullName = msg.name.startsWith(msg.type + "_") ? msg.name : msg.type + "_" + msg.name;
-      msg.id = await invoke<number>("get_message_id", {
-        name: fullName,
-        msgType: msg.type,
-      });
+      if (msg.id > 0 && ID_RANGES[msg.type]) {
+        if (!maxByType[msg.type] || msg.id > maxByType[msg.type]) {
+          maxByType[msg.type] = msg.id;
+        }
+      }
+    }
+  }
+
+  // 2. 为 id==0 的消息分配新 ID
+  const changedModules = new Set<ModuleDef>();
+  for (const mod of parsedModules.value) {
+    for (const msg of mod.messages) {
+      if (msg.id !== 0) continue;
+      const range = ID_RANGES[msg.type];
+      if (!range) continue;
+      const [minId, maxId] = range;
+      const nextId = (maxByType[msg.type] ?? minId - 1) + 1;
+      if (nextId > maxId) continue;
+      msg.id = nextId;
+      maxByType[msg.type] = nextId;
+      changedModules.add(mod);
+    }
+  }
+
+  // 3. 回写 XML 文件
+  if (changedModules.size > 0) {
+    const sep = config.xmlPath && !config.xmlPath.endsWith("/") ? "/" : "";
+    for (const mod of changedModules) {
+      mod.rawContent = moduleToXml(mod);
+      if (config.xmlPath) {
+        await writeTextFile(`${config.xmlPath}${sep}${mod.fileName}`, mod.rawContent);
+      }
+    }
+    if (selectedModule.value && changedModules.has(selectedModule.value)) {
+      const xml = selectedModule.value.rawContent ?? moduleToXml(selectedModule.value);
+      editorContent.value = xml;
+      savedContent.value = xml;
     }
   }
 }
@@ -1327,7 +1377,7 @@ function handleGenerate() {
           <n-text class="config-modal-label">高级操作</n-text>
           <div class="advanced-panel">
             <n-text depth="3" style="font-size: 12px">
-              清空本地消息 ID 会删除当前协议对应的生成文件，并把已加载 XML 的消息 ID 重置为 0。
+              清空消息 ID 会删除当前协议对应的生成文件，并把已加载 XML 中的消息 ID 重置为 0（同时回写 XML 文件）。
             </n-text>
             <div class="advanced-danger-row">
               <n-input

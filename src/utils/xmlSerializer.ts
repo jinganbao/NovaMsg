@@ -22,10 +22,9 @@ export function moduleToXml(mod: ModuleDef): string {
     lines.push("  </Struct>");
   }
   for (const msg of mod.messages) {
-    const msgAttrs = [
-      `name="${esc(msg.name)}"`,
-      `type="${esc(msg.type)}"`,
-    ];
+    const msgAttrs: string[] = [];
+    if (msg.id > 0) msgAttrs.push(`id="${msg.id}"`);
+    msgAttrs.push(`name="${esc(msg.name)}"`, `type="${esc(msg.type)}"`);
     if (msg.desc) msgAttrs.push(`desc="${esc(msg.desc)}"`);
     lines.push(`  <Message ${msgAttrs.join(" ")}>`);
     for (const f of msg.fields) {

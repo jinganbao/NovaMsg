@@ -3,7 +3,7 @@
  *
  * 预期 XML 结构（根据样本代码反推）：
  * <Module fileName="login_message.xml" moduleName="login" desc="登陆消息">
- *   <Message id="5005" name="S2C_AccountLoginSuccess" type="S2C" desc="返回登陆账号成功">
+ *   <Message id="20000" name="S2C_AccountLoginSuccess" type="S2C" desc="返回登陆账号成功">
  *     <Field type="int" name="ServerCurTime" desc="服务器当前时间"/>
  *     <Field type="string" name="ServerVer" desc="服务器版本"/>
  *     ...
@@ -40,9 +40,9 @@ function parseField(node: Record<string, unknown>): FieldDef {
 
 /** 解析单个消息节点 */
 function parseMessage(node: Record<string, unknown>): MessageDef {
+  const rawId = Number(node.id ?? 0);
   return {
-    // XML 中不允许手动配置消息 ID；即使写了 id 也忽略，统一由本地 ID 分配器生成。
-    id: 0,
+    id: Number.isFinite(rawId) && rawId > 0 ? rawId : 0,
     name: String(node.name ?? ""),
     type: String(node.type ?? "S2C") as MessageType,
     desc: String(node.desc ?? ""),
