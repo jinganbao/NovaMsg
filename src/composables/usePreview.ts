@@ -33,6 +33,7 @@ export function usePreview(
   config: { themeMode: string },
   message: { success: (m: string) => void; error: (m: string) => void; warning: (m: string) => void },
   lightEditorTheme: EditorExtension,
+  darkEditorTheme: EditorExtension,
 ) {
   const showPreviewModal = ref(false);
   const previewFiles = ref<PreviewFile[]>([]);
@@ -86,7 +87,11 @@ export function usePreview(
     if (previewActiveFile.value.endsWith(".xml")) ext.push(xml());
     else if (previewActiveFile.value.endsWith(".java")) ext.push(java());
     else if (previewActiveFile.value.endsWith(".cs")) ext.push(StreamLanguage.define(csharp));
-    ext.push(config.themeMode === "dark" ? oneDark : lightEditorTheme);
+    if (config.themeMode === "dark") {
+      ext.push(oneDark, darkEditorTheme);
+    } else {
+      ext.push(lightEditorTheme);
+    }
     return ext;
   });
 
@@ -130,7 +135,7 @@ export function usePreview(
       return;
     }
     if (!canGenerate) {
-      message.warning("请先完成路径配置");
+      message.warning("请先配置消息目录");
       return;
     }
     if (!runValidation()) return;

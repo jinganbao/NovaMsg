@@ -6,6 +6,7 @@
  * - 下载完成后重启
  */
 import { ref, computed } from "vue";
+import { getVersion } from "@tauri-apps/api/app";
 import { checkAppUpdate, type UpdateResult } from "@/utils/update";
 
 export function useAppUpdate(
@@ -20,6 +21,8 @@ export function useAppUpdate(
   const updateDownloaded = ref(0);
   const updateTotal = ref(0);
   const updateProgressLabel = ref("");
+  const currentVersion = ref("");
+  const latestVersion = ref("");
 
   const updateProgressPercentage = computed(() => {
     if (updateTotal.value > 0) {
@@ -36,8 +39,14 @@ export function useAppUpdate(
   async function checkForUpdates(options?: { silent?: boolean }) {
     checkingUpdate.value = true;
     try {
+      if (!currentVersion.value) {
+        currentVersion.value = await getVersion();
+      }
       const result = await checkAppUpdate();
       updateInfo.value = result;
+      latestVersion.value = result.hasUpdate
+        ? result.version ?? ""
+        : result.currentVersion ?? currentVersion.value;
 
       if (!result.hasUpdate) {
         if (options?.silent) return;
@@ -53,6 +62,15 @@ export function useAppUpdate(
       }
     } finally {
       checkingUpdate.value = false;
+    }
+  }
+
+  async function loadCurrentVersion() {
+    if (currentVersion.value) return;
+    try {
+      currentVersion.value = await getVersion();
+    } catch {
+      currentVersion.value = "";
     }
   }
 
@@ -96,6 +114,7 @@ export function useAppUpdate(
 
   /** 启动时自动检查更新（静默模式，仅 config.autoCheckUpdate 为 true 时执行） */
   async function autoCheckOnStartup() {
+    await loadCurrentVersion();
     if (!config.autoCheckUpdate) return;
     await checkForUpdates({ silent: true });
   }
@@ -110,6 +129,9 @@ export function useAppUpdate(
     updateTotal,
     updateProgressLabel,
     updateProgressPercentage,
+    currentVersion,
+    latestVersion,
+    loadCurrentVersion,
     checkForUpdates,
     handleUpdateDownload,
     cancelUpdateDownload,

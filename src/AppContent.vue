@@ -12,9 +12,11 @@ import {
   useMessage,
 } from "naive-ui";
 import { open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 import { parseXmlFiles } from "@/utils/xmlParser";
 import { moduleToXml } from "@/utils/xmlSerializer";
+import { applyManagedMessagePaths } from "@/utils/managedPaths";
 import { generateProtocols } from "@/generator";
 import type { GenerateOptions, ModuleDef } from "@/generator/types";
 import { useConfig } from "@/composables/useConfig";
@@ -34,6 +36,7 @@ import { useMessageIds } from "@/composables/useMessageIds";
 
 const message = useMessage();
 const config = useConfig();
+applyManagedMessagePaths(config);
 
 // ---------- 错误工具 ----------
 function errMsg(e: unknown): string {
@@ -87,6 +90,8 @@ const {
   updateTotal,
   updateProgressLabel,
   updateProgressPercentage,
+  currentVersion,
+  latestVersion,
   checkForUpdates,
   handleUpdateDownload,
   cancelUpdateDownload,
@@ -132,6 +137,31 @@ const lightEditorTheme = EditorView.theme({
   },
 }, { dark: false });
 
+const darkEditorTheme = EditorView.theme({
+  "&": {
+    color: "#D8E2F0",
+    backgroundColor: "#10151D",
+  },
+  ".cm-content": {
+    caretColor: "#4DA3FF",
+  },
+  ".cm-gutters": {
+    backgroundColor: "#161D27",
+    color: "#758397",
+    borderRightColor: "#293241",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "#1D2633",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "#1D2633",
+    color: "#A9B7C8",
+  },
+  ".cm-selectionBackground": {
+    backgroundColor: "rgba(77, 163, 255, 0.22)",
+  },
+}, { dark: true });
+
 const {
   showPreviewModal,
   previewFiles,
@@ -150,7 +180,7 @@ const {
   doPreview: doPreviewRaw,
   getFileName,
   getFileDir,
-} = usePreview(config, message, lightEditorTheme);
+} = usePreview(config, message, lightEditorTheme, darkEditorTheme);
 
 // ---------- 消息 ID ----------
 const {
@@ -183,11 +213,49 @@ type PendingAction =
 const pendingAction = ref<PendingAction | null>(null);
 const showUnsavedModal = computed(() => pendingAction.value !== null);
 
+const SVN_COMMIT_HISTORY_KEY = "NovaMsg-svn-commit-history";
 const showConfig = ref(false);
 const fileSearch = ref("");
+const svnUpdating = ref(false);
+const svnCommitting = ref(false);
+const showSvnCommitModal = ref(false);
+const svnCommitMessage = ref("");
+const svnCommitHistory = ref<string[]>(loadSvnCommitHistory());
+const svnCommitHistoryOptions = computed(() =>
+  svnCommitHistory.value.map((item) => ({
+    label: item,
+    value: item,
+  })),
+);
 
 const activeFile = ref<string | null>(null);
 const viewMode = ref<"form" | "xml">("form");
+
+function loadSvnCommitHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(SVN_COMMIT_HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string").slice(0, 10) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSvnCommitHistory(messageText: string) {
+  const trimmed = messageText.trim();
+  if (!trimmed) return;
+  svnCommitHistory.value = [
+    trimmed,
+    ...svnCommitHistory.value.filter((item) => item !== trimmed),
+  ].slice(0, 10);
+  localStorage.setItem(SVN_COMMIT_HISTORY_KEY, JSON.stringify(svnCommitHistory.value));
+}
+
+function selectSvnCommitHistory(value: string | number | null) {
+  if (typeof value === "string" && value) {
+    svnCommitMessage.value = value;
+  }
+}
 
 // 连接文件操作与 activeFile
 setActiveFileAccessors(
@@ -209,8 +277,21 @@ const filteredModules = computed(() => {
 });
 
 const canGenerate = computed(
-  () => parsedModules.value.length > 0 && !!config.frontendPath && !!config.backendPath,
+  () => parsedModules.value.length > 0 && !!config.svnPath,
 );
+
+async function ensureManagedDirs() {
+  applyManagedMessagePaths(config);
+  for (const path of [config.xmlPath, config.backendPath, config.frontendPath]) {
+    if (path) {
+      try {
+        await mkdir(path, { recursive: true });
+      } catch {
+        // 目录已存在或并发创建时忽略。
+      }
+    }
+  }
+}
 
 // ---------- 编辑器扩展 ----------
 const editorExtensions = computed(() => [
@@ -226,7 +307,7 @@ const editorExtensions = computed(() => [
       return false;
     },
   }),
-  config.themeMode === "dark" ? oneDark : lightEditorTheme,
+  config.themeMode === "dark" ? [oneDark, darkEditorTheme] : lightEditorTheme,
 ]);
 
 // ---------- 生成选项 ----------
@@ -282,8 +363,10 @@ function syncXmlEditorToModule(): boolean {
 }
 
 async function saveCurrentFile(): Promise<boolean> {
+  applyManagedMessagePaths(config);
   if (!activeFile.value || !config.xmlPath) return false;
   if (!runValidation()) return false;
+  await ensureManagedDirs();
   const sep = config.xmlPath.endsWith("/") ? "" : "/";
   const filePath = `${config.xmlPath}${sep}${activeFile.value}`;
   if (viewMode.value === "form" && selectedModule.value) {
@@ -395,10 +478,78 @@ function onFormChanged(mod: ModuleDef) {
 }
 
 // ---------- 目录选择 ----------
-async function pickDirectory(field: "xmlPath" | "backendPath" | "frontendPath") {
+async function pickDirectory(field: "svnPath") {
   const selected = await open({ directory: true });
   if (!selected) return;
   config[field] = selected as string;
+  applyManagedMessagePaths(config);
+  await ensureManagedDirs();
+  await loadXmlFromDirectory(config.xmlPath);
+}
+
+async function doSvnUpdate(showSuccess = true): Promise<boolean> {
+  if (!config.svnPath) {
+    message.warning("请先在设置中配置消息目录");
+    return false;
+  }
+  await ensureManagedDirs();
+  svnUpdating.value = true;
+  try {
+    await invoke("svn_update", { cwd: config.svnPath });
+    if (config.xmlPath) {
+      await loadXmlFromDirectory(config.xmlPath);
+    }
+    if (showSuccess) message.success("SVN 更新成功");
+    return true;
+  } catch (e) {
+    message.error("SVN 更新失败: " + errMsg(e));
+    return false;
+  } finally {
+    svnUpdating.value = false;
+  }
+}
+
+async function handleSvnUpdate() {
+  if (isDirty.value) {
+    message.warning("当前文件有未保存修改，请先保存后再更新 SVN");
+    return;
+  }
+  await doSvnUpdate();
+}
+
+function openSvnCommitModal() {
+  if (!config.svnPath) {
+    message.warning("请先在设置中配置消息目录");
+    return;
+  }
+  if (isDirty.value) {
+    message.warning("当前文件有未保存修改，请先保存后再提交 SVN");
+    return;
+  }
+  svnCommitMessage.value = svnCommitHistory.value[0] ?? "";
+  showSvnCommitModal.value = true;
+}
+
+async function handleSvnCommit() {
+  const commitMessage = svnCommitMessage.value.trim();
+  if (!commitMessage) {
+    message.warning("请输入提交说明");
+    return;
+  }
+  svnCommitting.value = true;
+  try {
+    const result = await invoke<{ stdout: string; stderr: string }>("svn_commit_all", {
+      cwd: config.svnPath,
+      message: commitMessage,
+    });
+    saveSvnCommitHistory(commitMessage);
+    showSvnCommitModal.value = false;
+    message.success(result.stdout.includes("没有可提交") ? "SVN 没有可提交的变化" : "SVN 提交成功");
+  } catch (e) {
+    message.error("SVN 提交失败: " + errMsg(e));
+  } finally {
+    svnCommitting.value = false;
+  }
 }
 
 // ---------- 文件选择 ----------
@@ -412,17 +563,20 @@ function handleFileSelect(fileName: string) {
 }
 
 async function doReloadXmlDirectory() {
+  applyManagedMessagePaths(config);
   if (!config.xmlPath) {
-    message.warning("请先选择 XML 目录");
+    message.warning("请先选择消息目录");
     return;
   }
+  await ensureManagedDirs();
   await loadXmlFromDirectory(config.xmlPath);
   message.success("XML 已重载");
 }
 
 function handleReloadXmlDirectory() {
+  applyManagedMessagePaths(config);
   if (!config.xmlPath) {
-    message.warning("请先选择 XML 目录");
+    message.warning("请先选择消息目录");
     return;
   }
   if (isDirty.value) {
@@ -446,9 +600,10 @@ function refreshActiveModule() {
 // ---------- 生成 ----------
 async function doGenerate() {
   if (!canGenerate.value) {
-    message.warning("请先完成路径配置");
+    message.warning("请先配置消息目录");
     return;
   }
+  await ensureManagedDirs();
   if (!runValidation()) return;
   if (!await autoAssignIds()) return;
   if (!runValidation()) return;
@@ -472,6 +627,7 @@ async function doGenerate() {
 
 // ---------- 预览 ----------
 async function doPreview() {
+  await ensureManagedDirs();
   await doPreviewRaw(
     selectedModule.value,
     canGenerate.value,
@@ -488,13 +644,14 @@ function handlePreview() {
   doPreview();
 }
 function handleGenerate() {
-  if (!canGenerate.value) { message.warning("请先完成路径配置"); return; }
+  if (!canGenerate.value) { message.warning("请先配置消息目录"); return; }
   if (isDirty.value) { pendingAction.value = { type: "generate" }; return; }
   doGenerate();
 }
 
 // ---------- 清空消息 ID ----------
 async function handleClearMessageIds() {
+  await ensureManagedDirs();
   await handleClearMessageIdsRaw(
     parsedModules.value,
     selectedModule.value,
@@ -544,6 +701,7 @@ watch(selectedModule, (mod) => {
 }, { immediate: true });
 
 onMounted(() => {
+  applyManagedMessagePaths(config);
   if (config.xmlPath) {
     loadXmlFromDirectory(config.xmlPath);
   }
@@ -555,6 +713,7 @@ onBeforeUnmount(() => {
 });
 
 watch(showConfig, (show, prev) => {
+  applyManagedMessagePaths(config);
   if (prev && !show && config.xmlPath) {
     loadXmlFromDirectory(config.xmlPath);
   }
@@ -604,7 +763,7 @@ watch(showConfig, (show, prev) => {
         <div v-if="parsedModules.length === 0" class="empty">
           <n-text depth="3">暂无 XML 文件</n-text>
           <div class="empty-actions">
-            <n-button size="small" type="primary" @click="pickXmlDirectoryAndLoad">选择 XML 目录</n-button>
+            <n-button size="small" type="primary" @click="pickXmlDirectoryAndLoad">选择消息目录</n-button>
             <n-button size="small" @click="openNewFileModal">新建 XML</n-button>
           </div>
         </div>
@@ -647,6 +806,8 @@ watch(showConfig, (show, prev) => {
           <n-button size="tiny" :disabled="parsedModules.length === 0" @click="runValidation({ showSuccess: true })">校验</n-button>
           <n-button size="tiny" @click="handlePreview">预览</n-button>
           <n-button type="primary" size="tiny" :disabled="!canGenerate" @click="handleGenerate">生成</n-button>
+          <n-button size="tiny" :disabled="!config.svnPath || svnCommitting" :loading="svnUpdating" @click="handleSvnUpdate">更新</n-button>
+          <n-button size="tiny" :disabled="!config.svnPath || svnUpdating" :loading="svnCommitting" @click="openSvnCommitModal">提交</n-button>
         </div>
       </div>
       <div class="editor-wrap">
@@ -672,8 +833,8 @@ watch(showConfig, (show, prev) => {
       <div class="footer-bar">
         <n-text style="font-size: 12px; color: var(--text-muted)">
           共 {{ parsedModules.length }} 个模块
-          <span v-if="config.frontendPath && config.backendPath"> · 输出路径已配置</span>
-          <span v-else> · 尚未完成输出路径配置</span>
+          <span v-if="config.svnPath"> · 消息目录已配置</span>
+          <span v-else> · 尚未配置消息目录</span>
         </n-text>
       </div>
     </main>
@@ -682,25 +843,14 @@ watch(showConfig, (show, prev) => {
     <n-modal v-model:show="showConfig" preset="card" title="配置" style="width: 520px">
       <n-space vertical :size="16">
         <div class="config-modal-row">
-          <n-text class="config-modal-label">XML 目录</n-text>
+          <n-text class="config-modal-label">消息目录</n-text>
           <div class="config-modal-input">
-            <n-input :value="config.xmlPath" placeholder="点击右侧按钮选择目录" readonly size="small" />
-            <n-button size="small" @click="pickDirectory('xmlPath')">选择</n-button>
+            <n-input :value="config.svnPath" placeholder="选择统一管理的消息根目录" readonly size="small" />
+            <n-button size="small" @click="pickDirectory('svnPath')">选择</n-button>
           </div>
         </div>
-        <div class="config-modal-row">
-          <n-text class="config-modal-label">后端消息目录</n-text>
-          <div class="config-modal-input">
-            <n-input :value="config.backendPath" placeholder="点击右侧按钮选择目录" readonly size="small" />
-            <n-button size="small" @click="pickDirectory('backendPath')">选择</n-button>
-          </div>
-        </div>
-        <div class="config-modal-row">
-          <n-text class="config-modal-label">前端消息目录</n-text>
-          <div class="config-modal-input">
-            <n-input :value="config.frontendPath" placeholder="点击右侧按钮选择目录" readonly size="small" />
-            <n-button size="small" @click="pickDirectory('frontendPath')">选择</n-button>
-          </div>
+        <div class="config-modal-hint">
+          自动使用消息目录下的 xml / java / c 子目录，SVN 更新和提交也使用消息目录。
         </div>
         <div class="config-modal-row">
           <n-text class="config-modal-label">主题色</n-text>
@@ -740,6 +890,9 @@ watch(showConfig, (show, prev) => {
           <n-text class="config-modal-label">应用更新</n-text>
           <div class="config-modal-input" style="display:flex;align-items:center;gap:12px">
             <n-button size="small" :loading="checkingUpdate" @click="checkForUpdates()">检查更新</n-button>
+            <span class="update-version-text">
+              最新版本：{{ latestVersion ? `v${latestVersion}` : (currentVersion ? `v${currentVersion}` : '未检查') }}
+            </span>
             <n-switch v-model:value="config.autoCheckUpdate" size="small" />
             <span style="font-size:12px;color:var(--text-muted)">启动时自动检查</span>
           </div>
@@ -773,6 +926,46 @@ watch(showConfig, (show, prev) => {
       </n-space>
     </n-modal>
 
+    <!-- SVN 提交说明 -->
+    <n-modal v-model:show="showSvnCommitModal" preset="card" title="SVN 提交" style="width: 560px">
+      <n-space vertical :size="14">
+        <div>
+          <n-text class="commit-label">提交说明</n-text>
+          <n-input
+            v-model:value="svnCommitMessage"
+            type="textarea"
+            placeholder="请输入本次协议修改说明"
+            :autosize="{ minRows: 3, maxRows: 5 }"
+          />
+        </div>
+        <div v-if="svnCommitHistory.length > 0" class="commit-history">
+          <n-text class="commit-label">最近提交说明</n-text>
+          <n-select
+            placeholder="选择历史提交说明"
+            clearable
+            :options="svnCommitHistoryOptions"
+            @update:value="selectSvnCommitHistory"
+          />
+        </div>
+        <n-text depth="3" style="font-size:12px">
+          提交时会自动纳入新增、删除和变更文件。
+        </n-text>
+      </n-space>
+      <template #footer>
+        <n-space justify="end">
+          <n-button :disabled="svnCommitting" @click="showSvnCommitModal = false">取消</n-button>
+          <n-button
+            type="primary"
+            :loading="svnCommitting"
+            :disabled="!svnCommitMessage.trim()"
+            @click="handleSvnCommit"
+          >
+            提交
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <!-- 新建 XML 文件弹窗 -->
     <n-modal v-model:show="showNewFileModal" preset="card" title="新建 XML 文件" style="width: 640px">
       <n-space vertical :size="16">
@@ -789,7 +982,7 @@ watch(showConfig, (show, prev) => {
           </div>
         </div>
         <n-text depth="3" style="font-size: 12px">
-          文件将保存至：{{ config.xmlPath }}/，创建后模块名默认使用文件名。
+          文件将保存至消息目录下的 xml 子目录，创建后模块名默认使用文件名。
         </n-text>
       </n-space>
       <template #footer>
@@ -1114,6 +1307,21 @@ watch(showConfig, (show, prev) => {
   gap: 8px;
 }
 
+.config-modal-hint {
+  margin-top: -8px;
+  padding-left: 118px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.update-version-text {
+  min-width: 118px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .config-divider {
   height: 1px;
   background: var(--border-subtle);
@@ -1130,6 +1338,19 @@ watch(showConfig, (show, prev) => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+}
+
+.commit-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.commit-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .theme-picker {

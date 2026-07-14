@@ -1,7 +1,9 @@
 import { reactive, watch } from "vue";
+import { applyManagedMessagePaths } from "@/utils/managedPaths";
 
 export interface AppConfig {
   xmlPath: string;
+  svnPath: string;
   backendPath: string;
   frontendPath: string;
   author: string;
@@ -17,6 +19,7 @@ const STORAGE_KEY = "NovaMsg-config";
 
 const defaults: AppConfig = {
   xmlPath: "",
+  svnPath: "",
   backendPath: "",
   frontendPath: "",
   author: "Sunshine",
@@ -29,15 +32,23 @@ const defaults: AppConfig = {
 };
 
 function loadConfig(): AppConfig {
+  let loaded: AppConfig;
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      return { ...defaults, ...JSON.parse(stored) };
+      loaded = { ...defaults, ...JSON.parse(stored) };
+      if (!loaded.svnPath && loaded.xmlPath.replace(/\\/g, "/").endsWith("/xml")) {
+        loaded.svnPath = loaded.xmlPath.replace(/\\/g, "/").replace(/\/xml\/?$/, "");
+      }
+      applyManagedMessagePaths(loaded);
+      return loaded;
     }
   } catch {
     // localStorage 数据损坏时回退到默认值
   }
-  return { ...defaults };
+  loaded = { ...defaults };
+  applyManagedMessagePaths(loaded);
+  return loaded;
 }
 
 const config = reactive<AppConfig>(loadConfig());

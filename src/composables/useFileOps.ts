@@ -3,8 +3,9 @@
  */
 import { ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
-import { readTextFile, readDir, writeTextFile, remove, rename } from "@tauri-apps/plugin-fs";
+import { mkdir, readTextFile, readDir, writeTextFile, remove, rename } from "@tauri-apps/plugin-fs";
 import { parseXmlModule } from "@/utils/xmlParser";
+import { applyManagedMessagePaths } from "@/utils/managedPaths";
 import type { ModuleDef } from "@/generator/types";
 
 function errMsg(e: unknown): string {
@@ -32,7 +33,7 @@ function createEmptyXmlContent(moduleName: string): string {
 }
 
 export function useFileOps(
-  config: { xmlPath: string },
+  config: { svnPath: string; xmlPath: string; backendPath: string; frontendPath: string },
   message: { success: (m: string) => void; error: (m: string) => void; warning: (m: string) => void },
 ) {
   const parsedModules = ref<ModuleDef[]>([]);
@@ -69,6 +70,19 @@ export function useFileOps(
     activeFileSetter = setter;
   }
 
+  async function ensureManagedDirs() {
+    applyManagedMessagePaths(config);
+    for (const path of [config.xmlPath, config.backendPath, config.frontendPath]) {
+      if (path) {
+        try {
+          await mkdir(path, { recursive: true });
+        } catch {
+          // 目录已存在或并发创建时忽略。
+        }
+      }
+    }
+  }
+
   function parseFilesWithErrors(files: { name: string; content: string }[]): ModuleDef[] {
     const modules: ModuleDef[] = [];
     const errors: { fileName: string; message: string }[] = [];
@@ -91,6 +105,7 @@ export function useFileOps(
     if (!dirPath) return;
     parsing.value = true;
     try {
+      await ensureManagedDirs();
       const entries = await readDir(dirPath);
       const sep = dirPath.endsWith("/") ? "" : "/";
       const xmlFiles = entries
@@ -105,9 +120,13 @@ export function useFileOps(
         const content = await readTextFile(f.path);
         files.push({ name: f.name, content });
       }
+      const previousActiveFile = activeFileGetter?.();
       parsedModules.value = parseFilesWithErrors(files);
       if (parsedModules.value.length > 0) {
-        activeFileSetter?.(parsedModules.value[0].fileName);
+        const nextActiveFile = parsedModules.value.some((mod) => mod.fileName === previousActiveFile)
+          ? previousActiveFile
+          : parsedModules.value[0].fileName;
+        activeFileSetter?.(nextActiveFile ?? null);
       }
       if (parseErrors.value.length > 0) {
         message.warning(`成功加载 ${parsedModules.value.length} 个模块文件，${parseErrors.value.length} 个文件解析失败`);
@@ -124,7 +143,8 @@ export function useFileOps(
   async function pickXmlDirectoryAndLoad() {
     const selected = await open({ directory: true });
     if (!selected) return;
-    config.xmlPath = selected as string;
+    config.svnPath = selected as string;
+    await ensureManagedDirs();
     await loadXmlFromDirectory(config.xmlPath);
   }
 
@@ -161,8 +181,9 @@ export function useFileOps(
   }
 
   function openNewFileModal() {
+    applyManagedMessagePaths(config);
     if (!config.xmlPath) {
-      message.warning("请先在配置中设置 XML 目录");
+      message.warning("请先在配置中设置消息目录");
       return;
     }
     newFileName.value = "";
@@ -185,6 +206,7 @@ export function useFileOps(
 
     creatingFile.value = true;
     try {
+      await ensureManagedDirs();
       try {
         await readTextFile(filePath);
         message.warning(`文件 ${name} 已存在，请更换文件名`);

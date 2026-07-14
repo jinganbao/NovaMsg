@@ -39,7 +39,7 @@ export function useMessageIds(
   ): Promise<boolean> {
     const hasMissingId = parsedModules.some((mod) => mod.messages.some((msg) => msg.id === 0));
     if (hasMissingId && !config.xmlPath) {
-      message.error("消息 ID 需要写回 XML，请先选择 XML 目录");
+      message.error("消息 ID 需要写回 XML，请先选择消息目录");
       return false;
     }
 

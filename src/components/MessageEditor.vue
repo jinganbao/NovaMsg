@@ -35,6 +35,21 @@ function cloneModule(mod: ModuleDef): ModuleDef {
 const edit = reactive<ModuleDef>(cloneModule(props.module));
 let syncingFromProps = false;
 
+async function syncEditFromProps(resetSelection: boolean) {
+  syncingFromProps = true;
+  Object.assign(edit, cloneModule(props.module));
+  if (resetSelection) {
+    selectedStructIndex.value = 0;
+    selectedMessageIndex.value = 0;
+    expandedStructNames.value = edit.structs.length > 0 ? [0] : [];
+    expandedNames.value = edit.messages.length > 0 ? [0] : [];
+  } else {
+    normalizeSelection();
+  }
+  await nextTick();
+  syncingFromProps = false;
+}
+
 const fieldTypeOptions = computed(() => [
   ...BASE_FIELD_TYPES,
   ...edit.structs
@@ -47,12 +62,8 @@ const FIELD_LIST_OPTIONS = [
   { label: "List", value: "list" },
 ];
 
-// 仅在切换文件时从 props 重新加载
-watch(() => props.module.fileName, async () => {
-  syncingFromProps = true;
-  Object.assign(edit, cloneModule(props.module));
-  await nextTick();
-  syncingFromProps = false;
+watch(() => props.module, () => {
+  syncEditFromProps(true);
 });
 
 watch(
@@ -356,13 +367,6 @@ watch(
     }
   },
 );
-
-watch(() => props.module.fileName, () => {
-  selectedStructIndex.value = 0;
-  selectedMessageIndex.value = 0;
-  expandedStructNames.value = edit.structs.length > 0 ? [0] : [];
-  expandedNames.value = edit.messages.length > 0 ? [0] : [];
-}, { flush: "post" });
 
 watch(() => [edit.structs.length, edit.messages.length], () => {
   normalizeSelection();
