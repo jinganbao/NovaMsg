@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path, process::Command};
+use std::{env, fs, path::{Path, PathBuf}, process::Command};
 use tauri::{Manager, RunEvent, WindowEvent};
 
 #[derive(Debug, Deserialize)]
@@ -36,11 +36,13 @@ fn run_svn_command_owned(cwd: &str, args: &[String]) -> Result<SvnCommandResult,
         return Err(format!("SVN 路径不是目录: {}", cwd));
     }
 
-    let output = Command::new("svn")
+    let svn_bin = resolve_svn_binary()?;
+    let output = Command::new(&svn_bin)
         .args(args)
         .current_dir(path)
+        .env("PATH", svn_search_path())
         .output()
-        .map_err(|err| format!("执行 svn 失败: {}", err))?;
+        .map_err(|err| format!("执行 svn 失败 {}: {}", svn_bin.display(), err))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -55,6 +57,37 @@ fn run_svn_command_owned(cwd: &str, args: &[String]) -> Result<SvnCommandResult,
     }
 
     Ok(SvnCommandResult { stdout, stderr })
+}
+
+fn svn_search_path() -> String {
+    let current_path = env::var("PATH").unwrap_or_default();
+    let fallback = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    if current_path.is_empty() {
+        fallback.to_string()
+    } else {
+        format!("{}:{}", current_path, fallback)
+    }
+}
+
+fn resolve_svn_binary() -> Result<PathBuf, String> {
+    for path in ["/usr/bin/svn", "/opt/homebrew/bin/svn", "/usr/local/bin/svn"] {
+        let candidate = PathBuf::from(path);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    for dir in svn_search_path().split(':') {
+        if dir.trim().is_empty() {
+            continue;
+        }
+        let candidate = Path::new(dir).join("svn");
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err("未找到 svn 命令，请先安装 SVN 或确认 svn 位于 /usr/bin、/opt/homebrew/bin、/usr/local/bin".to_string())
 }
 
 fn svn_status_entries(cwd: &str) -> Result<Vec<(char, String)>, String> {
