@@ -36,7 +36,13 @@ export function useMessageIds(
     parsedModules: ModuleDef[],
     selectedModule: ModuleDef | undefined,
     onEditorUpdate: (xml: string) => void,
-  ) {
+  ): Promise<boolean> {
+    const hasMissingId = parsedModules.some((mod) => mod.messages.some((msg) => msg.id === 0));
+    if (hasMissingId && !config.xmlPath) {
+      message.error("消息 ID 需要写回 XML，请先选择 XML 目录");
+      return false;
+    }
+
     // 1. 收集各类型当前已使用的最大 ID
     const maxByType: Record<string, number> = {};
     for (const mod of parsedModules) {
@@ -58,7 +64,10 @@ export function useMessageIds(
         if (!range) continue;
         const [minId, maxId] = range;
         const nextId = (maxByType[msg.type] ?? minId - 1) + 1;
-        if (nextId > maxId) continue;
+        if (nextId > maxId) {
+          message.error(`${msg.type} 消息 ID 已超出可分配范围 ${minId}-${maxId}`);
+          return false;
+        }
         msg.id = nextId;
         maxByType[msg.type] = nextId;
         changedModules.add(mod);
@@ -79,6 +88,8 @@ export function useMessageIds(
         onEditorUpdate(xml);
       }
     }
+
+    return true;
   }
 
   function resetLoadedMessageIds(

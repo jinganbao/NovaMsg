@@ -28,6 +28,12 @@ const csharpKeywordSet = new Set([
   "struct", "switch", "this", "throw", "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort",
   "using", "virtual", "void", "volatile", "while",
 ]);
+const idRanges: Record<string, [number, number]> = {
+  S2P: [1000, 4999],
+  P2S: [5000, 9999],
+  C2S: [10000, 19999],
+  S2C: [20000, 29999],
+};
 
 function parseListElementType(type: string): string | null {
   const clean = type.trim();
@@ -59,12 +65,47 @@ function isIdentifier(value: string): boolean {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
 }
 
+function startsWithLowercase(value: string): boolean {
+  return /^[a-z]/.test(value);
+}
+
+function startsWithUppercase(value: string): boolean {
+  return /^[A-Z]/.test(value);
+}
+
 function lowerFirst(value: string): string {
   return value ? value.charAt(0).toLowerCase() + value.slice(1) : value;
 }
 
-function upperFirst(value: string): string {
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+function messageClassName(messageType: string, messageName: string): string {
+  const prefix = `${messageType}_`;
+  return messageName.startsWith(prefix) ? messageName : `${prefix}${messageName}`;
+}
+
+function messageBaseName(messageType: string, messageName: string): string {
+  const prefix = `${messageType}_`;
+  return messageName.startsWith(prefix) ? messageName.slice(prefix.length) : messageName;
+}
+
+function addGeneratedNameIssue(
+  issues: ValidationIssue[],
+  seen: Map<string, { fileName: string; target: string }>,
+  key: string,
+  fileName: string,
+  target: string,
+  message: string,
+) {
+  const previous = seen.get(key);
+  if (!previous) {
+    seen.set(key, { fileName, target });
+    return;
+  }
+  issues.push({
+    level: "error",
+    fileName,
+    target,
+    message: `${message}，已在 ${previous.fileName} / ${previous.target} 中定义`,
+  });
 }
 
 function addDuplicateIssues(
@@ -98,8 +139,11 @@ function validateField(
     issues.push({ level: "error", fileName, target, message: "字段名不能为空" });
   } else {
     if (!isIdentifier(name)) issues.push({ level: "error", fileName, target, message: `字段名不是合法标识符：${name}` });
+    if (!startsWithLowercase(name)) {
+      issues.push({ level: "error", fileName, target, message: `字段名首字母必须小写：${name}` });
+    }
     const javaName = lowerFirst(name);
-    const csharpName = upperFirst(name);
+    const csharpName = lowerFirst(name);
     if (javaKeywordSet.has(javaName)) {
       issues.push({ level: "error", fileName, target, message: `字段名生成到 Java 后是关键字：${javaName}` });
     }
@@ -117,6 +161,10 @@ function validateField(
 
 export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const seenCsharpClasses = new Map<string, { fileName: string; target: string }>();
+  const seenJavaBeanClasses = new Map<string, { fileName: string; target: string }>();
+  const seenJavaMessageClasses = new Map<string, { fileName: string; target: string }>();
+  const seenMessageIds = new Map<number, { fileName: string; target: string }>();
 
   for (const mod of modules) {
     const fileName = mod.fileName || "未命名文件";
@@ -126,6 +174,8 @@ export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
 
     if (!mod.moduleName.trim()) {
       issues.push({ level: "error", fileName, target: "模块", message: "模块名不能为空" });
+    } else if (!startsWithLowercase(mod.moduleName.trim())) {
+      issues.push({ level: "error", fileName, target: "模块", message: `模块名首字母必须小写：${mod.moduleName.trim()}` });
     }
 
     for (const struct of mod.structs ?? []) {
@@ -135,7 +185,24 @@ export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
       else {
         if (seenStructNames.has(name)) issues.push({ level: "error", fileName, target, message: `对象名重复：${name}` });
         seenStructNames.add(name);
+        addGeneratedNameIssue(
+          issues,
+          seenCsharpClasses,
+          `cs:${name}`,
+          fileName,
+          target,
+          `生成的 C# 类名冲突：${name}`,
+        );
+        addGeneratedNameIssue(
+          issues,
+          seenJavaBeanClasses,
+          `java-bean:${mod.moduleName.trim()}:${name}`,
+          fileName,
+          target,
+          `生成的 Java Bean 类冲突：${mod.moduleName.trim()}.bean.${name}`,
+        );
         if (!isIdentifier(name)) issues.push({ level: "error", fileName, target, message: "对象名不是合法 Java/C# 标识符" });
+        if (!startsWithUppercase(name)) issues.push({ level: "error", fileName, target, message: `对象名首字母必须大写：${name}` });
         if (javaKeywordSet.has(name) || csharpKeywordSet.has(name)) issues.push({ level: "error", fileName, target, message: "对象名不能使用 Java/C# 关键字" });
       }
       addDuplicateIssues(issues, fileName, target, struct.fields);
@@ -149,14 +216,50 @@ export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
       const name = msg.name.trim();
       if (!name) issues.push({ level: "error", fileName, target, message: "消息名不能为空" });
       else {
-        const fullName = msg.name.startsWith(msg.type + "_") ? msg.name : `${msg.type}_${msg.name}`;
+        const fullName = messageClassName(msg.type, msg.name);
         if (seenMessageNames.has(fullName)) issues.push({ level: "error", fileName, target, message: `消息名重复：${fullName}` });
         seenMessageNames.add(fullName);
+        addGeneratedNameIssue(
+          issues,
+          seenCsharpClasses,
+          `cs:${fullName}`,
+          fileName,
+          target,
+          `生成的 C# 类名冲突：${fullName}`,
+        );
+        addGeneratedNameIssue(
+          issues,
+          seenJavaMessageClasses,
+          `java-message:${mod.moduleName.trim()}:${fullName}Message`,
+          fileName,
+          target,
+          `生成的 Java Message 类冲突：${mod.moduleName.trim()}.messages.${fullName}Message`,
+        );
+        const baseName = messageBaseName(msg.type, name);
         if (!isIdentifier(name)) issues.push({ level: "error", fileName, target, message: "消息名不是合法 Java/C# 标识符" });
+        if (!startsWithUppercase(baseName)) issues.push({ level: "error", fileName, target, message: `消息名首字母必须大写：${name}` });
         if (javaKeywordSet.has(name) || csharpKeywordSet.has(name)) issues.push({ level: "error", fileName, target, message: "消息名不能使用 Java/C# 关键字" });
       }
       if (!["C2S", "S2C", "S2P", "P2S"].includes(msg.type)) {
         issues.push({ level: "error", fileName, target, message: `未知消息方向：${msg.type}` });
+      } else if (msg.id > 0) {
+        const [minId, maxId] = idRanges[msg.type];
+        if (msg.id < minId || msg.id > maxId) {
+          issues.push({ level: "error", fileName, target, message: `${msg.type} 消息 ID 超出范围：${msg.id}，应在 ${minId}-${maxId}` });
+        }
+      }
+      if (msg.id > 0) {
+        const previous = seenMessageIds.get(msg.id);
+        if (previous) {
+          issues.push({
+            level: "error",
+            fileName,
+            target,
+            message: `消息 ID 冲突：${msg.id} 已用于 ${previous.fileName} / ${previous.target}`,
+          });
+        } else {
+          seenMessageIds.set(msg.id, { fileName, target });
+        }
       }
       addDuplicateIssues(issues, fileName, target, msg.fields);
       for (const field of msg.fields) {

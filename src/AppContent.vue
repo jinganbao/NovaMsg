@@ -103,6 +103,7 @@ const {
 } = useValidation();
 
 function runValidation(options: { showSuccess?: boolean } = {}): boolean {
+  if (!syncXmlEditorToModule()) return false;
   return runValidationRaw(parsedModules.value, options, message);
 }
 
@@ -174,7 +175,11 @@ const isDirty = computed(() => {
   if (viewMode.value === "form") return isFormDirty.value;
   return editorContent.value !== savedContent.value;
 });
-type PendingAction = { type: "switch"; fileName: string } | { type: "preview" } | { type: "generate" };
+type PendingAction =
+  | { type: "switch"; fileName: string }
+  | { type: "preview" }
+  | { type: "generate" }
+  | { type: "reloadXml" };
 const pendingAction = ref<PendingAction | null>(null);
 const showUnsavedModal = computed(() => pendingAction.value !== null);
 
@@ -201,12 +206,6 @@ const filteredModules = computed(() => {
     mod.fileName.toLowerCase().includes(keyword) ||
     mod.moduleName.toLowerCase().includes(keyword),
   );
-});
-
-const xmlPathLabel = computed(() => {
-  if (!config.xmlPath) return "未选择 XML 目录";
-  const parts = config.xmlPath.split(/[\\/]/).filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : config.xmlPath;
 });
 
 const canGenerate = computed(
@@ -251,7 +250,7 @@ function buildGenerateOptions(modules: ModuleDef[]): GenerateOptions {
 
 // ---------- 消息 ID 分配包装 ----------
 async function autoAssignIds() {
-  await autoAssignIdsRaw(parsedModules.value, selectedModule.value, (xml) => {
+  return autoAssignIdsRaw(parsedModules.value, selectedModule.value, (xml) => {
     editorContent.value = xml;
     savedContent.value = xml;
   });
@@ -263,11 +262,28 @@ function getPromptTitle() {
   if (!a) return "";
   if (a.type === "switch") return "切换文件";
   if (a.type === "preview") return "预览";
+  if (a.type === "reloadXml") return "重载 XML";
   return "生成代码";
 }
 
-async function saveCurrentFile() {
-  if (!activeFile.value || !config.xmlPath) return;
+function syncXmlEditorToModule(): boolean {
+  if (viewMode.value !== "xml" || !activeFile.value) return true;
+  try {
+    const [mod] = parseXmlFiles([{ name: activeFile.value, content: editorContent.value }]);
+    const index = parsedModules.value.findIndex((item) => item.fileName === activeFile.value);
+    if (index >= 0) {
+      parsedModules.value[index] = mod;
+    }
+    return true;
+  } catch (e) {
+    message.error(errMsg(e));
+    return false;
+  }
+}
+
+async function saveCurrentFile(): Promise<boolean> {
+  if (!activeFile.value || !config.xmlPath) return false;
+  if (!runValidation()) return false;
   const sep = config.xmlPath.endsWith("/") ? "" : "/";
   const filePath = `${config.xmlPath}${sep}${activeFile.value}`;
   if (viewMode.value === "form" && selectedModule.value) {
@@ -285,12 +301,14 @@ async function saveCurrentFile() {
     }
   }
   message.success("已保存");
+  return true;
 }
 
 async function onSaveAndProceed() {
   const action = pendingAction.value;
   pendingAction.value = null;
-  await saveCurrentFile();
+  const saved = await saveCurrentFile();
+  if (!saved) return;
   executeAction(action!);
 }
 
@@ -320,6 +338,9 @@ function executeAction(action: PendingAction) {
       break;
     case "generate":
       doGenerate();
+      break;
+    case "reloadXml":
+      doReloadXmlDirectory();
       break;
   }
 }
@@ -390,6 +411,27 @@ function handleFileSelect(fileName: string) {
   isFormDirty.value = false;
 }
 
+async function doReloadXmlDirectory() {
+  if (!config.xmlPath) {
+    message.warning("请先选择 XML 目录");
+    return;
+  }
+  await loadXmlFromDirectory(config.xmlPath);
+  message.success("XML 已重载");
+}
+
+function handleReloadXmlDirectory() {
+  if (!config.xmlPath) {
+    message.warning("请先选择 XML 目录");
+    return;
+  }
+  if (isDirty.value) {
+    pendingAction.value = { type: "reloadXml" };
+    return;
+  }
+  doReloadXmlDirectory();
+}
+
 // ---------- 重新解析当前模块 ----------
 function refreshActiveModule() {
   const mod = selectedModule.value;
@@ -408,7 +450,7 @@ async function doGenerate() {
     return;
   }
   if (!runValidation()) return;
-  await autoAssignIds();
+  if (!await autoAssignIds()) return;
   if (!runValidation()) return;
   try {
     const result = await generateProtocols(
@@ -526,10 +568,10 @@ watch(showConfig, (show, prev) => {
       <div class="sider-header">
         <span class="title">NovaMsg</span>
         <div class="sider-actions">
-          <n-button type="primary" size="tiny" style="flex: 1" :loading="parsing" @click="pickXmlDirectoryAndLoad">选择目录</n-button>
-          <n-button size="tiny" style="flex: 1" :loading="parsing" @click="openNewFileModal">+ 新建</n-button>
+          <n-button type="primary" size="tiny" :loading="parsing" @click="pickXmlDirectoryAndLoad">选择目录</n-button>
+          <n-button size="tiny" :loading="parsing" :disabled="!config.xmlPath" @click="handleReloadXmlDirectory">重载 XML</n-button>
+          <n-button size="tiny" class="sider-action-full" :loading="parsing" @click="openNewFileModal">+ 新建</n-button>
         </div>
-        <div class="path-chip" :title="config.xmlPath">{{ xmlPathLabel }}</div>
       </div>
 
       <div class="file-list">
@@ -1040,9 +1082,14 @@ watch(showConfig, (show, prev) => {
 }
 
 .sider-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.sider-action-full {
+  grid-column: 1 / -1;
 }
 
 .config-modal-row {
@@ -1184,19 +1231,6 @@ watch(showConfig, (show, prev) => {
   border-radius: 50%;
   background: var(--warning);
   margin-left: auto;
-}
-
-.path-chip {
-  min-height: 24px;
-  padding: 4px 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  color: var(--text-muted);
-  background: var(--bg-input);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .empty {

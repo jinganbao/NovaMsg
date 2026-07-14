@@ -23,6 +23,7 @@ function indentCode(content: string, language: GeneratedLanguage): string {
   const lines = content.replace(/\r\n?/g, "\n").split("\n");
   const formatted: string[] = [];
   let indent = 0;
+  let inSwitchCase = false;
   let previousBlank = false;
 
   for (const sourceLine of lines) {
@@ -33,6 +34,14 @@ function indentCode(content: string, language: GeneratedLanguage): string {
         previousBlank = true;
       }
       continue;
+    }
+
+    if (
+      inSwitchCase &&
+      (line.startsWith("case ") || line.startsWith("default:") || line.startsWith("}"))
+    ) {
+      indent = Math.max(0, indent - 1);
+      inSwitchCase = false;
     }
 
     if (line.startsWith("}") || line.startsWith("};")) {
@@ -46,6 +55,11 @@ function indentCode(content: string, language: GeneratedLanguage): string {
     const closesInlineBlock = line.startsWith("}") && line.endsWith("{");
     if (opensBlock || closesInlineBlock) {
       indent += 1;
+    }
+
+    if (line.startsWith("case ") || line.startsWith("default:")) {
+      indent += 1;
+      inSwitchCase = true;
     }
 
     if (language === "java" && line.startsWith("package ")) {

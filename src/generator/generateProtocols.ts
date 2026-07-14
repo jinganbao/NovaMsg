@@ -19,7 +19,54 @@ import {
   isClientSend,
   isServerHandle,
 } from "./renderModel";
-import { writeFile, fileExists, ensureDir, joinPath, packageToPath } from "./fsWrapper";
+import { fileExists, joinPath, packageToPath, writeGeneratedFiles } from "./fsWrapper";
+import type { GeneratedFileToWrite } from "./fsWrapper";
+
+function assertUniqueOutputPath(
+  seen: Map<string, string>,
+  path: string,
+  owner: string,
+) {
+  const previous = seen.get(path);
+  if (!previous) {
+    seen.set(path, owner);
+    return;
+  }
+  throw new Error(`生成路径冲突：${path} 同时来自 ${previous} 和 ${owner}，请调整 XML 中的模块名/对象名/消息名`);
+}
+
+function assertUniqueGeneratedPaths(
+  allMessages: RenderMessage[],
+  allStructs: RenderStruct[],
+  csharpPath: string,
+  javaPath: string,
+  opts: ReturnType<typeof resolveOptions>,
+) {
+  const seen = new Map<string, string>();
+  assertUniqueOutputPath(seen, joinPath(csharpPath, "MessageBeans.cs"), "C# MessageBeans");
+  assertUniqueOutputPath(seen, joinPath(csharpPath, "MessagePool.cs"), "C# MessagePool");
+
+  for (const struct of allStructs) {
+    const dir = joinPath(javaPath, packageToPath(struct.javaPackage));
+    assertUniqueOutputPath(seen, joinPath(dir, `${struct.javaClassName}.java`), `对象 ${struct.fileName}/${struct.name}`);
+  }
+
+  for (const msg of allMessages) {
+    const dir = joinPath(javaPath, packageToPath(msg.javaPackage));
+    assertUniqueOutputPath(seen, joinPath(dir, `${msg.javaClassName}.java`), `消息 ${msg.fileName}/${msg.name}`);
+  }
+
+  const messageIdDir = joinPath(javaPath, packageToPath(opts.messageIdPackage));
+  assertUniqueOutputPath(seen, joinPath(messageIdDir, "MessageId.java"), "Java MessageId");
+
+  const gameHandlerManagerDir = joinPath(javaPath, packageToPath(opts.gameHandlerManagerPackage));
+  assertUniqueOutputPath(seen, joinPath(gameHandlerManagerDir, "GameHandlerManager.java"), "Java GameHandlerManager");
+
+  for (const msg of allMessages.filter((m) => m.type === "C2S")) {
+    const dir = joinPath(javaPath, packageToPath(msg.handlerPackage));
+    assertUniqueOutputPath(seen, joinPath(dir, `${msg.handlerClassName}.java`), `Handler ${msg.fileName}/${msg.name}`);
+  }
+}
 
 /**
  * 生成协议代码
@@ -40,9 +87,9 @@ export async function generateProtocols(
   // 所有渲染消息（展平，保留输入顺序）
   const allMessages: RenderMessage[] = renderModules.flatMap((m) => m.messages);
   const allStructs: RenderStruct[] = renderModules.flatMap((m) => m.structs);
+  assertUniqueGeneratedPaths(allMessages, allStructs, csharpPath, javaPath, opts);
 
-  const writtenFiles: string[] = [];
-  const skippedFiles: string[] = [];
+  const filesToWrite: GeneratedFileToWrite[] = [];
 
   // ---------- 1. C# MessageBeans.cs ----------
   const messageBeansContent = formatGeneratedCSharp(templates.messageBeansCs({
@@ -50,9 +97,7 @@ export async function generateProtocols(
     messages: allMessages,
   }));
   const messageBeansPath = joinPath(csharpPath, "MessageBeans.cs");
-  await ensureDir(csharpPath);
-  await writeFile(messageBeansPath, messageBeansContent);
-  writtenFiles.push(messageBeansPath);
+  filesToWrite.push({ path: messageBeansPath, contents: messageBeansContent });
 
   // ---------- 2. C# MessagePool.cs ----------
   const s2cPool = allMessages.filter((m) => isClientReceive(m.type));
@@ -65,17 +110,14 @@ export async function generateProtocols(
     c2sMessages: c2sPool,
   }));
   const messagePoolPath = joinPath(csharpPath, "MessagePool.cs");
-  await writeFile(messagePoolPath, messagePoolContent);
-  writtenFiles.push(messagePoolPath);
+  filesToWrite.push({ path: messagePoolPath, contents: messagePoolContent });
 
   // ---------- 3. Java 对象类（每 Struct 一个文件，按模块分包） ----------
   for (const struct of allStructs) {
     const content = formatGeneratedJava(templates.javaStruct({ ...struct, author: opts.author }));
     const dir = joinPath(javaPath, packageToPath(struct.javaPackage));
     const filePath = joinPath(dir, `${struct.javaClassName}.java`);
-    await ensureDir(dir);
-    await writeFile(filePath, content);
-    writtenFiles.push(filePath);
+    filesToWrite.push({ path: filePath, contents: content });
   }
 
   // ---------- 4. Java 实体类（每消息一个文件，按模块分包） ----------
@@ -83,9 +125,7 @@ export async function generateProtocols(
     const content = formatGeneratedJava(templates.javaMessage({ ...msg, author: opts.author }));
     const dir = joinPath(javaPath, packageToPath(msg.javaPackage));
     const filePath = joinPath(dir, `${msg.javaClassName}.java`);
-    await ensureDir(dir);
-    await writeFile(filePath, content);
-    writtenFiles.push(filePath);
+    filesToWrite.push({ path: filePath, contents: content });
   }
 
   // ---------- 5. Java MessageId.java ----------
@@ -105,9 +145,7 @@ export async function generateProtocols(
   }));
   const messageIdDir = joinPath(javaPath, packageToPath(opts.messageIdPackage));
   const messageIdPath = joinPath(messageIdDir, "MessageId.java");
-  await ensureDir(messageIdDir);
-  await writeFile(messageIdPath, messageIdContent);
-  writtenFiles.push(messageIdPath);
+  filesToWrite.push({ path: messageIdPath, contents: messageIdContent });
 
   // ---------- 6. Java GameHandlerManager.java（仅 C2S/P2S 注册） ----------
   const handlerRegMsgs = allMessages.filter((m) => isServerHandle(m.type));
@@ -118,26 +156,17 @@ export async function generateProtocols(
   }));
   const gameHandlerManagerDir = joinPath(javaPath, packageToPath(opts.gameHandlerManagerPackage));
   const gameHandlerManagerPath = joinPath(gameHandlerManagerDir, "GameHandlerManager.java");
-  await ensureDir(gameHandlerManagerDir);
-  await writeFile(gameHandlerManagerPath, gameHandlerManagerContent);
-  writtenFiles.push(gameHandlerManagerPath);
+  filesToWrite.push({ path: gameHandlerManagerPath, contents: gameHandlerManagerContent });
 
   // ---------- 7. Java XXXHandler.java（仅 C2S，已存在则跳过） ----------
   for (const msg of allMessages.filter((m) => m.type === "C2S")) {
     const dir = joinPath(javaPath, packageToPath(msg.handlerPackage));
     const filePath = joinPath(dir, `${msg.handlerClassName}.java`);
-    await ensureDir(dir);
-    // 【关键】已存在则跳过，避免覆盖后端业务逻辑
-    if (await fileExists(filePath)) {
-      skippedFiles.push(filePath);
-      continue;
-    }
     const content = formatGeneratedJava(templates.javaHandler({ ...msg, author: opts.author }));
-    await writeFile(filePath, content);
-    writtenFiles.push(filePath);
+    filesToWrite.push({ path: filePath, contents: content, skipIfExists: true });
   }
 
-  return { writtenFiles, skippedFiles };
+  return await writeGeneratedFiles(filesToWrite);
 }
 
 /** 预览结果 */
@@ -167,6 +196,7 @@ export async function previewProtocols(
   const renderModules = buildRenderModules(modules, opts);
   const allMessages: RenderMessage[] = renderModules.flatMap((m) => m.messages);
   const allStructs: RenderStruct[] = renderModules.flatMap((m) => m.structs);
+  assertUniqueGeneratedPaths(allMessages, allStructs, csharpPath, javaPath, opts);
 
   const files: PreviewFile[] = [];
   const skippedHandlerFiles: string[] = [];

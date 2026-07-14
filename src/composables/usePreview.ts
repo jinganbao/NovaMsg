@@ -123,7 +123,7 @@ export function usePreview(
     backendPath: string,
     buildGenerateOptions: (modules: ModuleDef[]) => GenerateOptions,
     runValidation: () => boolean,
-    autoAssignIds: () => Promise<void>,
+    autoAssignIds: () => Promise<boolean>,
   ) {
     if (!selectedModule) {
       message.warning("请先在左侧选择一个文件");
@@ -134,7 +134,7 @@ export function usePreview(
       return;
     }
     if (!runValidation()) return;
-    await autoAssignIds();
+    if (!await autoAssignIds()) return;
     if (!runValidation()) return;
     const mod = selectedModule;
     previewLoading.value = true;

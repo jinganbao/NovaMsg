@@ -21,105 +21,229 @@ import { mapFieldsWithStructs } from "./typeMapper";
 // ============================================================
 /** C# 使用 tab 缩进 */
 const T = "\t";
-/** Java 使用 2/4/8 空格缩进 */
+/** Java 使用 4/8/12 空格缩进 */
 const S4 = "    ";
 const S8 = "        ";
+const S12 = "            ";
 
 // ============================================================
 // 编解码方法体行生成（预计算，含缩进）
 // ============================================================
 
-/** 生成 C# encode 行（方法体 3 tab，循环体 4 tab） */
-function genCsEncodeLines(fields: MappedField[]): string[] {
+/** 生成 C# encode 行（tagged=true: 只写出已 set 字段并附 tag；tagged=false: 顺序写出所有字段） */
+function genCsEncodeLines(fields: MappedField[], tagged: boolean): string[] {
   const lines: string[] = [];
-  for (const f of fields) {
-    if (f.isArray) {
-      lines.push(`${T}${T}${T}writeShort(buf, (short)this.${f.csName}.Count);`);
-      lines.push(`${T}${T}${T}for (int i = 0; i < this.${f.csName}.Count; i++) {`);
-      if (f.element?.isStruct) {
-        lines.push(`${T}${T}${T}${T}this.${f.csName}[i].encode(buf);`);
-      } else {
-        lines.push(`${T}${T}${T}${T}${f.csWrite}(buf, this.${f.csName}[i]);`);
-      }
+  if (tagged) {
+    lines.push(`${T}${T}${T}int __fieldCount = 0;`);
+    for (const f of fields) {
+      lines.push(`${T}${T}${T}if (this.__setFields.Contains("${f.csName}")) {`);
+      lines.push(`${T}${T}${T}${T}__fieldCount++;`);
       lines.push(`${T}${T}${T}}`);
-    } else if (f.isStruct) {
-      lines.push(`${T}${T}${T}this.${f.csName}.encode(buf);`);
-    } else {
-      lines.push(`${T}${T}${T}${f.csWrite}(buf, this.${f.csName});`);
     }
-  }
-  return lines;
-}
-
-/** 生成 C# decode 行 */
-function genCsDecodeLines(fields: MappedField[]): string[] {
-  const lines: string[] = [];
-  for (const f of fields) {
-    if (f.isArray) {
-      lines.push(`${T}${T}${T}int ${f.csName}_length =readShort(buf);`);
-      lines.push(`${T}${T}${T}this.${f.csName}=new RepeatedField<${f.element!.csType}>();`);
-      lines.push(`${T}${T}${T}for (int i = 0; i < ${f.csName}_length; i++) {`);
-      if (f.element?.isStruct) {
-        lines.push(`${T}${T}${T}${T}${f.element.csType} item = new ${f.element.csType}();`);
-        lines.push(`${T}${T}${T}${T}item.decode(buf);`);
-        lines.push(`${T}${T}${T}${T}this.${f.csName}.Add(item);`);
-      } else {
-        lines.push(`${T}${T}${T}${T}this.${f.csName}.Add(${f.csRead}(buf));`);
-      }
+    lines.push(`${T}${T}${T}writeShort(buf, (short)__fieldCount);`);
+    let tag = 0;
+    for (const f of fields) {
+      lines.push(`${T}${T}${T}if (this.__setFields.Contains("${f.csName}")) {`);
+      lines.push(`${T}${T}${T}${T}writeShort(buf, (short)${tag});`);
+      lines.push(`${T}${T}${T}${T}System.IO.MemoryStream __fieldStream = new System.IO.MemoryStream();`);
+      lines.push(`${T}${T}${T}${T}ByteBuffer __fieldBuf = new ByteBuffer(__fieldStream);`);
+      pushCsFieldWrite(lines, f, `${T}${T}${T}${T}`, "__fieldBuf");
+      lines.push(`${T}${T}${T}${T}byte[] __fieldBytes = __fieldStream.ToArray();`);
+      lines.push(`${T}${T}${T}${T}writeInt(buf, __fieldBytes.Length);`);
+      lines.push(`${T}${T}${T}${T}buf.stream.Write(__fieldBytes, 0, __fieldBytes.Length);`);
       lines.push(`${T}${T}${T}}`);
-    } else if (f.isStruct) {
-      lines.push(`${T}${T}${T}this.${f.csName} = new ${f.csType}();`);
-      lines.push(`${T}${T}${T}this.${f.csName}.decode(buf);`);
-    } else {
-      lines.push(`${T}${T}${T}this.${f.csName} = ${f.csRead}(buf);`);
+      tag++;
+    }
+  } else {
+    for (const f of fields) {
+      pushCsFieldWrite(lines, f, `${T}${T}${T}`);
     }
   }
   return lines;
 }
 
-/** 生成 Java write 行 */
-function genJavaWriteLines(fields: MappedField[]): string[] {
-  const lines: string[] = [];
-  for (const f of fields) {
-    if (f.isArray) {
-      lines.push(`${S4}writeShort(buf, (short)this.${f.javaName}.size());`);
-      lines.push(`${S4}for (int i = 0; i < this.${f.javaName}.size(); i++) {`);
-      if (f.element?.isStruct) {
-        lines.push(`${S8}writeBean(buf, this.${f.javaName}.get(i));`);
-      } else {
-        lines.push(`${S8}${f.javaWrite}(buf, this.${f.javaName}.get(i));`);
-      }
-      lines.push(`${S4}}`);
-    } else if (f.isStruct) {
-      lines.push(`${S4}writeBean(buf, this.${f.javaName});`);
+/** 按字段类型追加 C# write 行 */
+function pushCsFieldWrite(lines: string[], f: MappedField, indent: string, bufVar = "buf"): void {
+  if (f.isArray) {
+    lines.push(`${indent}int ${f.csName}_count = this.${f.csName} == null ? 0 : this.${f.csName}.Count;`);
+    lines.push(`${indent}writeShort(${bufVar}, (short)${f.csName}_count);`);
+    lines.push(`${indent}for (int i = 0; i < ${f.csName}_count; i++) {`);
+    const inner = indent + T;
+    if (f.element?.isStruct) {
+      lines.push(`${inner}this.${f.csName}[i].encode(${bufVar});`);
     } else {
-      lines.push(`${S4}${f.javaWrite}(buf, this.${f.javaName});`);
+      lines.push(`${inner}${f.csWrite}(${bufVar}, this.${f.csName}[i]);`);
+    }
+    lines.push(`${indent}}`);
+  } else if (f.isStruct) {
+    lines.push(`${indent}this.${f.csName}.encode(${bufVar});`);
+  } else {
+    lines.push(`${indent}${f.csWrite}(${bufVar}, this.${f.csName});`);
+  }
+}
+
+/** 生成 C# decode 行（tagged=true: 按 tag 读取对象字段；tagged=false: 顺序读出所有字段） */
+function genCsDecodeLines(fields: MappedField[], tagged: boolean): string[] {
+  const lines: string[] = [];
+  if (tagged) {
+    lines.push(`${T}${T}${T}this.__setFields.Clear();`);
+    lines.push(`${T}${T}${T}int __fieldCount = readShort(buf);`);
+    lines.push(`${T}${T}${T}for (int __i = 0; __i < __fieldCount; __i++) {`);
+    lines.push(`${T}${T}${T}${T}int __tag = readShort(buf);`);
+    lines.push(`${T}${T}${T}${T}int __length = readInt(buf);`);
+    lines.push(`${T}${T}${T}${T}ByteBuffer __fieldBuf = new ByteBuffer(buf.bytes);`);
+    lines.push(`${T}${T}${T}${T}__fieldBuf.pos = buf.pos;`);
+    lines.push(`${T}${T}${T}${T}buf.pos += __length;`);
+    lines.push(`${T}${T}${T}${T}switch (__tag) {`);
+    let tag = 0;
+    for (const f of fields) {
+      lines.push(`${T}${T}${T}${T}case ${tag}:`);
+      pushCsFieldRead(lines, f, `${T}${T}${T}${T}${T}`, "__fieldBuf", `this._${f.csName}`);
+      lines.push(`${T}${T}${T}${T}${T}this.__setFields.Add("${f.csName}");`);
+      lines.push(`${T}${T}${T}${T}${T}break;`);
+      tag++;
+    }
+    lines.push(`${T}${T}${T}${T}default:`);
+    lines.push(`${T}${T}${T}${T}${T}break;`);
+    lines.push(`${T}${T}${T}${T}}`);
+    lines.push(`${T}${T}${T}}`);
+  } else {
+    for (const f of fields) {
+      pushCsFieldRead(lines, f, `${T}${T}${T}`);
     }
   }
   return lines;
 }
 
-/** 生成 Java read 行 */
-function genJavaReadLines(fields: MappedField[]): string[] {
-  const lines: string[] = [];
-  for (const f of fields) {
-    if (f.isArray) {
-      lines.push(`${S4}int ${f.javaName}_length = readShort(buf);`);
-      lines.push(`${S4}this.${f.javaName} = new ArrayList<${f.element!.javaType}>();`);
-      lines.push(`${S4}for (int i = 0; i < ${f.javaName}_length; i++) {`);
-      if (f.element?.isStruct) {
-        lines.push(`${S8}this.${f.javaName}.add((${f.element.javaType}) readBean(buf, ${f.element.javaType}.class));`);
-      } else {
-        lines.push(`${S8}this.${f.javaName}.add(${f.javaRead}(buf));`);
-      }
-      lines.push(`${S4}}`);
-    } else if (f.isStruct) {
-      lines.push(`${S4}this.${f.javaName} = (${f.javaType}) readBean(buf, ${f.javaType}.class);`);
+/** 按字段类型追加 C# read 行 */
+function pushCsFieldRead(lines: string[], f: MappedField, indent: string, bufVar = "buf", target = `this.${f.csName}`): void {
+  if (f.isArray) {
+    lines.push(`${indent}int ${f.csName}_length =readShort(${bufVar});`);
+    lines.push(`${indent}${target}=new RepeatedField<${f.element!.csType}>();`);
+    lines.push(`${indent}for (int i = 0; i < ${f.csName}_length; i++) {`);
+    const inner = indent + T;
+    if (f.element?.isStruct) {
+      lines.push(`${inner}${f.element.csType} item = new ${f.element.csType}();`);
+      lines.push(`${inner}item.decode(${bufVar});`);
+      lines.push(`${inner}${target}.Add(item);`);
     } else {
-      lines.push(`${S4}this.${f.javaName} = ${f.javaRead}(buf);`);
+      lines.push(`${inner}${target}.Add(${f.csRead}(${bufVar}));`);
+    }
+    lines.push(`${indent}}`);
+  } else if (f.isStruct) {
+    lines.push(`${indent}${target} = new ${f.csType}();`);
+    lines.push(`${indent}${target}.decode(${bufVar});`);
+  } else {
+    lines.push(`${indent}${target} = ${f.csRead}(${bufVar});`);
+  }
+}
+
+/** 生成 Java write 行（tagged=true: 只写出已 set 字段并附 tag；tagged=false: 顺序写出所有字段） */
+function genJavaWriteLines(fields: MappedField[], tagged: boolean): string[] {
+  const lines: string[] = [];
+  if (tagged) {
+    lines.push(`${S4}int __fieldCount = 0;`);
+    for (const f of fields) {
+      lines.push(`${S4}if (this.__setFields.contains("${f.javaName}")) {`);
+      lines.push(`${S8}__fieldCount++;`);
+      lines.push(`${S4}}`);
+    }
+    lines.push(`${S4}writeShort(buf, __fieldCount);`);
+    let tag = 0;
+    for (const f of fields) {
+      lines.push(`${S4}if (this.__setFields.contains("${f.javaName}")) {`);
+      lines.push(`${S8}writeShort(buf, ${tag});`);
+      lines.push(`${S8}ByteBuf __fieldBuf = Unpooled.buffer();`);
+      lines.push(`${S8}try {`);
+      pushFieldWrite(lines, f, S12, "__fieldBuf");
+      lines.push(`${S12}writeInt(buf, __fieldBuf.readableBytes());`);
+      lines.push(`${S12}buf.writeBytes(__fieldBuf);`);
+      lines.push(`${S8}} finally {`);
+      lines.push(`${S12}__fieldBuf.release();`);
+      lines.push(`${S8}}`);
+      lines.push(`${S4}}`);
+      tag++;
+    }
+  } else {
+    for (const f of fields) {
+      pushFieldWrite(lines, f, S4);
     }
   }
   return lines;
+}
+
+/** 按字段类型追加 write 行（不含外层缩进包装，由 caller 传入当前缩进） */
+function pushFieldWrite(lines: string[], f: MappedField, indent: string, bufVar = "buf"): void {
+  if (f.isArray) {
+    lines.push(`${indent}int ${f.javaName}_count = this.${f.javaName} == null ? 0 : this.${f.javaName}.size();`);
+    lines.push(`${indent}writeShort(${bufVar}, (short)${f.javaName}_count);`);
+    lines.push(`${indent}for (int i = 0; i < ${f.javaName}_count; i++) {`);
+    const inner = indent + S4;
+    if (f.element?.isStruct) {
+      lines.push(`${inner}writeBean(${bufVar}, this.${f.javaName}.get(i));`);
+    } else {
+      lines.push(`${inner}${f.javaWrite}(${bufVar}, this.${f.javaName}.get(i));`);
+    }
+    lines.push(`${indent}}`);
+  } else if (f.isStruct) {
+    lines.push(`${indent}writeBean(${bufVar}, this.${f.javaName});`);
+  } else {
+    lines.push(`${indent}${f.javaWrite}(${bufVar}, this.${f.javaName});`);
+  }
+}
+
+/** 生成 Java read 行（tagged=true: while-readTag+switch；tagged=false: 顺序读出所有字段） */
+function genJavaReadLines(fields: MappedField[], tagged: boolean): string[] {
+  const lines: string[] = [];
+  if (!tagged && fields.length === 0) return lines;
+
+  if (tagged) {
+    lines.push(`${S4}this.__setFields.clear();`);
+    lines.push(`${S4}int __fieldCount = readShort(buf);`);
+    lines.push(`${S4}for (int __i = 0; __i < __fieldCount; __i++) {`);
+    lines.push(`${S8}int __tag = readShort(buf);`);
+    lines.push(`${S8}int __length = readInt(buf);`);
+    lines.push(`${S8}ByteBuf __fieldBuf = buf.readSlice(__length);`);
+    lines.push(`${S8}switch (__tag) {`);
+    let tag = 0;
+    for (const f of fields) {
+      lines.push(`${S8}case ${tag}:`);
+      pushFieldRead(lines, f, S12, "__fieldBuf");
+      lines.push(`${S12}this.__setFields.add("${f.javaName}");`);
+      lines.push(`${S12}break;`);
+      tag++;
+    }
+    lines.push(`${S8}default:`);
+    lines.push(`${S12}break;`);
+    lines.push(`${S8}}`);
+    lines.push(`${S4}}`);
+  } else {
+    for (const f of fields) {
+      pushFieldRead(lines, f, S4);
+    }
+  }
+  return lines;
+}
+
+/** 按字段类型追加 read 行（不含外层缩进包装） */
+function pushFieldRead(lines: string[], f: MappedField, indent: string, bufVar = "buf"): void {
+  if (f.isArray) {
+    const lenVar = `${f.javaName}_length`;
+    lines.push(`${indent}int ${lenVar} = readShort(${bufVar});`);
+    lines.push(`${indent}this.${f.javaName} = new ArrayList<${f.element!.javaType}>();`);
+    lines.push(`${indent}for (int i = 0; i < ${lenVar}; i++) {`);
+    const inner = indent + S4;
+    if (f.element?.isStruct) {
+      lines.push(`${inner}this.${f.javaName}.add((${f.element.javaType}) readBean(${bufVar}, ${f.element.javaType}.class));`);
+    } else {
+      lines.push(`${inner}this.${f.javaName}.add(${f.javaRead}(${bufVar}));`);
+    }
+    lines.push(`${indent}}`);
+  } else if (f.isStruct) {
+    lines.push(`${indent}this.${f.javaName} = (${f.javaType}) readBean(${bufVar}, ${f.javaType}.class);`);
+  } else {
+    lines.push(`${indent}this.${f.javaName} = ${f.javaRead}(${bufVar});`);
+  }
 }
 
 // ============================================================
@@ -217,10 +341,10 @@ export function buildRenderMessage(
     handlerClassName: `${fullName}Handler`,
     structImports: fieldStructTypes(fields).map((name) => `${beanPackage}.${name}`),
     fields,
-    csEncodeLines: genCsEncodeLines(fields),
-    csDecodeLines: genCsDecodeLines(fields),
-    javaWriteLines: genJavaWriteLines(fields),
-    javaReadLines: genJavaReadLines(fields),
+    csEncodeLines: genCsEncodeLines(fields, true),
+    csDecodeLines: genCsDecodeLines(fields, true),
+    javaWriteLines: genJavaWriteLines(fields, true),
+    javaReadLines: genJavaReadLines(fields, true),
   };
 }
 
@@ -241,10 +365,10 @@ export function buildRenderStruct(
     javaClassName: struct.name,
     javaPackage: `${opts.javaBasePackage}.${pkgSeg}.bean`,
     fields,
-    csEncodeLines: genCsEncodeLines(fields),
-    csDecodeLines: genCsDecodeLines(fields),
-    javaWriteLines: genJavaWriteLines(fields),
-    javaReadLines: genJavaReadLines(fields),
+    csEncodeLines: genCsEncodeLines(fields, true),
+    csDecodeLines: genCsDecodeLines(fields, true),
+    javaWriteLines: genJavaWriteLines(fields, true),
+    javaReadLines: genJavaReadLines(fields, true),
   };
 }
 

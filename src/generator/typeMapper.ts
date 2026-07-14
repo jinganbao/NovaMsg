@@ -77,9 +77,9 @@ function parseArrayElement(type: string): string | null {
  * 将单个 FieldDef 映射为渲染用的 MappedField
  */
 export function mapField(field: FieldDef, structTypes = new Set<string>()): MappedField {
-  // C# / Java 字段名：首字母小写（camelCase）
+  // C# / Java 字段名：首字母小写
   const csName = field.name.charAt(0).toLowerCase() + field.name.slice(1);
-  const javaName = csName;
+  const javaName = field.name.charAt(0).toLowerCase() + field.name.slice(1);
 
   const elementTypeRaw = parseArrayElement(field.type);
   const isArray = elementTypeRaw !== null;

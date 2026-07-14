@@ -11,6 +11,12 @@ Handlebars.registerHelper("raw", function (this: unknown, options: Handlebars.He
   return options.fn(this);
 });
 
+/** 首字母大写，用于生成 setXxx / hasXxx 方法名 */
+Handlebars.registerHelper("capitalize", function (str: string) {
+  if (!str) return str;
+  return str.charAt(0).toUpperCase() + str.slice(1);
+});
+
 // 注意：模板中所有缩进为最终输出缩进，预计算行已包含各自缩进。
 
 /**
@@ -19,6 +25,7 @@ Handlebars.registerHelper("raw", function (this: unknown, options: Handlebars.He
  *    - 每个 Message 一个类，继承 IMessageRaw
  */
 export const MESSAGE_BEANS_CS = `using System;
+using System.Collections.Generic;
 using GameLogic;
 using GameCore.ProtoCollections;
 
@@ -30,7 +37,17 @@ namespace GameCore.Message
 	public class {{name}} : IMessageRaw {
 {{#each fields}}
 		//{{desc}}
-		public {{csType}} {{csName}}{{#if isArray}}=new RepeatedField<{{element.csType}}>(){{else}}{{#if isStruct}}=new {{csType}}(){{else}} {{/if}}{{/if}};
+		private {{csType}} _{{csName}};
+		public {{csType}} {{csName}} {
+			get { return this._{{csName}}; }
+			set {
+				this._{{csName}} = value;
+				this.__setFields.Add("{{csName}}");
+			}
+		}
+		public bool Has{{capitalize csName}} {
+			get { return this.__setFields.Contains("{{csName}}"); }
+		}
 {{/each}}
 
 		public override void encode(ByteBuffer buf) {
@@ -48,7 +65,17 @@ namespace GameCore.Message
 	public class {{name}} : IMessageRaw {
 {{#each fields}}
 		//{{desc}}
-		public {{csType}} {{csName}}{{#if isArray}}=new RepeatedField<{{element.csType}}>(){{else}}{{#if isStruct}}=new {{csType}}(){{else}} {{/if}}{{/if}};
+		private {{csType}} _{{csName}};
+		public {{csType}} {{csName}} {
+			get { return this._{{csName}}; }
+			set {
+				this._{{csName}} = value;
+				this.__setFields.Add("{{csName}}");
+			}
+		}
+		public bool Has{{capitalize csName}} {
+			get { return this.__setFields.Contains("{{csName}}"); }
+		}
 {{/each}}
 
 		public override void encode(ByteBuffer buf) {
@@ -138,11 +165,11 @@ namespace Com.Rilon.Gamebase.Message
  */
 export const JAVA_STRUCT = `package {{javaPackage}};
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import java.util.ArrayList;
 import java.util.List;
 import com.rilon.core.session.message.Bean;
 import lombok.Getter;
-import lombok.Setter;
 
 /**
  * {{fileName}}
@@ -150,14 +177,24 @@ import lombok.Setter;
  * @since : {{desc}}
  */
 @Getter
-@Setter
 public class {{javaClassName}} extends Bean {
 
 {{#each fields}}
   // {{desc}}
-  private {{javaType}} {{javaName}}{{#if isArray}}= new ArrayList<{{element.javaType}}>(){{else}}{{#if isStruct}}= new {{javaType}}(){{else}} {{/if}}{{/if}};
+  private {{javaType}} {{javaName}};
 {{/each}}
 
+{{#each fields}}
+  public void set{{capitalize javaName}}({{javaType}} {{javaName}}) {
+    this.{{javaName}} = {{javaName}};
+    this.__setFields.add("{{javaName}}");
+  }
+
+  public boolean has{{capitalize javaName}}() {
+    return this.__setFields.contains("{{javaName}}");
+  }
+
+{{/each}}
   @Override
   public boolean write(ByteBuf buf) {
 {{#each javaWriteLines}}{{this}}
@@ -178,12 +215,12 @@ public class {{javaClassName}} extends Bean {
  */
 export const JAVA_MESSAGE = `package {{javaPackage}};
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import java.util.ArrayList;
 import java.util.List;
 import com.rilon.core.session.message.Message;
 {{#each structImports}}import {{this}};
 {{/each}}import lombok.Getter;
-import lombok.Setter;
 
 /**
  * {{fileName}}
@@ -191,14 +228,24 @@ import lombok.Setter;
  * @since : {{desc}}
  */
 @Getter
-@Setter
 public class {{javaClassName}} extends Message {
 
 {{#each fields}}
   // {{desc}}
-  private {{javaType}} {{javaName}}{{#if isArray}}= new ArrayList<{{element.javaType}}>(){{else}}{{#if isStruct}}= new {{javaType}}(){{else}} {{/if}}{{/if}};
+  private {{javaType}} {{javaName}};
 {{/each}}
 
+{{#each fields}}
+  public void set{{capitalize javaName}}({{javaType}} {{javaName}}) {
+    this.{{javaName}} = {{javaName}};
+    this.__setFields.add("{{javaName}}");
+  }
+
+  public boolean has{{capitalize javaName}}() {
+    return this.__setFields.contains("{{javaName}}");
+  }
+
+{{/each}}
   @Override
   public boolean write(ByteBuf buf) {
 {{#each javaWriteLines}}{{this}}
