@@ -61,33 +61,72 @@ fn run_svn_command_owned(cwd: &str, args: &[String]) -> Result<SvnCommandResult,
 
 fn svn_search_path() -> String {
     let current_path = env::var("PATH").unwrap_or_default();
+    #[cfg(target_os = "windows")]
+    let fallback = [
+        r"C:\Program Files\TortoiseSVN\bin",
+        r"C:\Program Files\SlikSvn\bin",
+        r"C:\Program Files (x86)\Subversion\bin",
+        r"C:\Program Files\Subversion\bin",
+    ]
+    .join(";");
+    #[cfg(target_os = "windows")]
+    let separator = ";";
+
+    #[cfg(not(target_os = "windows"))]
     let fallback = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    #[cfg(not(target_os = "windows"))]
+    let separator = ":";
+
     if current_path.is_empty() {
         fallback.to_string()
     } else {
-        format!("{}:{}", current_path, fallback)
+        format!("{}{}{}", current_path, separator, fallback)
     }
 }
 
 fn resolve_svn_binary() -> Result<PathBuf, String> {
-    for path in ["/usr/bin/svn", "/opt/homebrew/bin/svn", "/usr/local/bin/svn"] {
+    #[cfg(target_os = "windows")]
+    let candidates = [
+        r"C:\Program Files\TortoiseSVN\bin\svn.exe",
+        r"C:\Program Files\SlikSvn\bin\svn.exe",
+        r"C:\Program Files (x86)\Subversion\bin\svn.exe",
+        r"C:\Program Files\Subversion\bin\svn.exe",
+    ];
+    #[cfg(not(target_os = "windows"))]
+    let candidates = ["/usr/bin/svn", "/opt/homebrew/bin/svn", "/usr/local/bin/svn"];
+
+    for path in candidates {
         let candidate = PathBuf::from(path);
         if candidate.exists() {
             return Ok(candidate);
         }
     }
 
-    for dir in svn_search_path().split(':') {
+    #[cfg(target_os = "windows")]
+    let executable_name = "svn.exe";
+    #[cfg(not(target_os = "windows"))]
+    let executable_name = "svn";
+
+    #[cfg(target_os = "windows")]
+    let separator = ';';
+    #[cfg(not(target_os = "windows"))]
+    let separator = ':';
+
+    for dir in svn_search_path().split(separator) {
         if dir.trim().is_empty() {
             continue;
         }
-        let candidate = Path::new(dir).join("svn");
+        let candidate = Path::new(dir).join(executable_name);
         if candidate.exists() {
             return Ok(candidate);
         }
     }
 
-    Err("未找到 svn 命令，请先安装 SVN 或确认 svn 位于 /usr/bin、/opt/homebrew/bin、/usr/local/bin".to_string())
+    #[cfg(target_os = "windows")]
+    return Err("未找到 svn.exe，请先安装 TortoiseSVN/SlikSVN，并确认 svn.exe 位于 PATH 或 C:\\Program Files\\TortoiseSVN\\bin".to_string());
+
+    #[cfg(not(target_os = "windows"))]
+    return Err("未找到 svn 命令，请先安装 SVN 或确认 svn 位于 /usr/bin、/opt/homebrew/bin、/usr/local/bin".to_string());
 }
 
 fn svn_status_entries(cwd: &str) -> Result<Vec<(char, String)>, String> {

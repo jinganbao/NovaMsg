@@ -101,6 +101,8 @@ export interface RenderStruct {
   moduleName: string;
   javaClassName: string;
   javaPackage: string;
+  /** Java 对象类需要导入的其它 Bean 类 */
+  structImports: string[];
   fields: MappedField[];
   csEncodeLines: string[];
   csDecodeLines: string[];

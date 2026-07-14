@@ -165,10 +165,12 @@ export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
   const seenJavaBeanClasses = new Map<string, { fileName: string; target: string }>();
   const seenJavaMessageClasses = new Map<string, { fileName: string; target: string }>();
   const seenMessageIds = new Map<number, { fileName: string; target: string }>();
+  const globalStructNames = new Set(
+    modules.flatMap((mod) => (mod.structs ?? []).map((struct) => struct.name.trim()).filter(Boolean)),
+  );
 
   for (const mod of modules) {
     const fileName = mod.fileName || "未命名文件";
-    const structNames = new Set((mod.structs ?? []).map((struct) => struct.name.trim()).filter(Boolean));
     const seenStructNames = new Set<string>();
     const seenMessageNames = new Set<string>();
 
@@ -207,7 +209,7 @@ export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
       }
       addDuplicateIssues(issues, fileName, target, struct.fields);
       for (const field of struct.fields) {
-        validateField(issues, fileName, target, field, structNames);
+        validateField(issues, fileName, target, field, globalStructNames);
       }
     }
 
@@ -263,7 +265,7 @@ export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
       }
       addDuplicateIssues(issues, fileName, target, msg.fields);
       for (const field of msg.fields) {
-        validateField(issues, fileName, target, field, structNames);
+        validateField(issues, fileName, target, field, globalStructNames);
       }
     }
   }

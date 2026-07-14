@@ -169,6 +169,8 @@ import io.netty.buffer.Unpooled;
 import java.util.ArrayList;
 import java.util.List;
 import com.rilon.core.session.message.Bean;
+{{#each structImports}}import {{this}};
+{{/each}}
 import lombok.Getter;
 
 /**

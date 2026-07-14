@@ -267,6 +267,17 @@ const selectedModule = computed(() =>
   parsedModules.value.find((m) => m.fileName === activeFile.value),
 );
 
+const availableStructs = computed(() =>
+  parsedModules.value.flatMap((mod) =>
+    (mod.structs ?? []).map((struct) => ({
+      name: struct.name,
+      desc: struct.desc,
+      moduleName: mod.moduleName,
+      fileName: mod.fileName,
+    })),
+  ),
+);
+
 const filteredModules = computed(() => {
   const keyword = fileSearch.value.trim().toLowerCase();
   if (!keyword) return parsedModules.value;
@@ -630,6 +641,7 @@ async function doPreview() {
   await ensureManagedDirs();
   await doPreviewRaw(
     selectedModule.value,
+    parsedModules.value,
     canGenerate.value,
     config.frontendPath,
     config.backendPath,
@@ -800,20 +812,29 @@ watch(showConfig, (show, prev) => {
           <span v-if="isDirty" class="editor-tab-dirty">● 未保存</span>
         </div>
         <div class="editor-toolbar">
-          <n-button size="tiny" :type="viewMode === 'form' ? 'primary' : 'default'" @click="setViewMode('form')">表单</n-button>
-          <n-button size="tiny" :type="viewMode === 'xml' ? 'primary' : 'default'" @click="setViewMode('xml')">XML</n-button>
-          <n-button size="tiny" :disabled="!activeFile || !isDirty" @click="saveCurrentFile">保存</n-button>
-          <n-button size="tiny" :disabled="parsedModules.length === 0" @click="runValidation({ showSuccess: true })">校验</n-button>
-          <n-button size="tiny" @click="handlePreview">预览</n-button>
-          <n-button type="primary" size="tiny" :disabled="!canGenerate" @click="handleGenerate">生成</n-button>
-          <n-button size="tiny" :disabled="!config.svnPath || svnCommitting" :loading="svnUpdating" @click="handleSvnUpdate">更新</n-button>
-          <n-button size="tiny" :disabled="!config.svnPath || svnUpdating" :loading="svnCommitting" @click="openSvnCommitModal">提交</n-button>
+          <div class="toolbar-group">
+            <n-button size="tiny" :type="viewMode === 'form' ? 'primary' : 'default'" @click="setViewMode('form')">表单</n-button>
+            <n-button size="tiny" :type="viewMode === 'xml' ? 'primary' : 'default'" @click="setViewMode('xml')">XML</n-button>
+          </div>
+          <div class="toolbar-group">
+            <n-button size="tiny" :disabled="!activeFile || !isDirty" @click="saveCurrentFile">保存</n-button>
+            <n-button size="tiny" :disabled="parsedModules.length === 0" @click="runValidation({ showSuccess: true })">校验</n-button>
+          </div>
+          <div class="toolbar-group toolbar-group--primary">
+            <n-button size="tiny" @click="handlePreview">预览</n-button>
+            <n-button type="primary" size="tiny" :disabled="!canGenerate" @click="handleGenerate">生成</n-button>
+          </div>
+          <div class="toolbar-group">
+            <n-button size="tiny" :disabled="!config.svnPath || svnCommitting" :loading="svnUpdating" @click="handleSvnUpdate">更新</n-button>
+            <n-button size="tiny" :disabled="!config.svnPath || svnUpdating" :loading="svnCommitting" @click="openSvnCommitModal">提交</n-button>
+          </div>
         </div>
       </div>
       <div class="editor-wrap">
         <template v-if="viewMode === 'form' && selectedModule">
           <MessageEditor
             :module="selectedModule"
+            :available-structs="availableStructs"
             :focus-message-name="messageEditorFocusName"
             :focus-tick="messageEditorFocusTick"
             @changed="onFormChanged"
@@ -1549,8 +1570,24 @@ watch(showConfig, (show, prev) => {
 .editor-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border-subtle);
+}
+.toolbar-group:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+.toolbar-group--primary {
+  padding-right: 2px;
 }
 
 .editor-wrap {

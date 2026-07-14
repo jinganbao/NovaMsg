@@ -306,6 +306,37 @@ function fieldStructTypes(fields: MappedField[]): string[] {
   return [...names];
 }
 
+function buildStructPackageMap(
+  modules: ModuleDef[],
+  opts: ResolvedOptions,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const mod of modules) {
+    const pkgSeg = moduleToPackageSeg(mod.moduleName, opts.modulePackageMap);
+    for (const struct of mod.structs ?? []) {
+      if (struct.name.trim()) {
+        map.set(struct.name.trim(), `${opts.javaBasePackage}.${pkgSeg}.bean`);
+      }
+    }
+  }
+  return map;
+}
+
+function fieldStructImports(
+  fields: MappedField[],
+  currentPackage: string,
+  structPackageMap: Map<string, string>,
+): string[] {
+  const imports = new Set<string>();
+  for (const name of fieldStructTypes(fields)) {
+    const pkg = structPackageMap.get(name);
+    if (pkg && pkg !== currentPackage) {
+      imports.add(`${pkg}.${name}`);
+    }
+  }
+  return [...imports].sort();
+}
+
 // ============================================================
 // 渲染模型构建
 // ============================================================
@@ -323,11 +354,12 @@ export function buildRenderMessage(
   module: ModuleDef,
   opts: ResolvedOptions,
   structTypes: Set<string>,
+  structPackageMap: Map<string, string>,
 ): RenderMessage {
   const pkgSeg = moduleToPackageSeg(module.moduleName, opts.modulePackageMap);
   const fields = mapFieldsWithStructs(msg.fields, structTypes);
   const fullName = ensurePrefix(msg.name, msg.type);
-  const beanPackage = `${opts.javaBasePackage}.${pkgSeg}.bean`;
+  const javaPackage = `${opts.javaBasePackage}.${pkgSeg}.messages`;
   return {
     id: msg.id,
     name: fullName,
@@ -336,10 +368,10 @@ export function buildRenderMessage(
     fileName: module.fileName,
     moduleName: module.moduleName,
     javaClassName: `${fullName}Message`,
-    javaPackage: `${opts.javaBasePackage}.${pkgSeg}.messages`,
+    javaPackage,
     handlerPackage: `${opts.handlerBasePackage}.${pkgSeg}.handler`,
     handlerClassName: `${fullName}Handler`,
-    structImports: fieldStructTypes(fields).map((name) => `${beanPackage}.${name}`),
+    structImports: fieldStructImports(fields, `${opts.javaBasePackage}.${pkgSeg}.bean`, structPackageMap),
     fields,
     csEncodeLines: genCsEncodeLines(fields, true),
     csDecodeLines: genCsDecodeLines(fields, true),
@@ -354,16 +386,19 @@ export function buildRenderStruct(
   module: ModuleDef,
   opts: ResolvedOptions,
   structTypes: Set<string>,
+  structPackageMap: Map<string, string>,
 ): RenderStruct {
   const pkgSeg = moduleToPackageSeg(module.moduleName, opts.modulePackageMap);
   const fields = mapFieldsWithStructs(struct.fields, structTypes);
+  const javaPackage = `${opts.javaBasePackage}.${pkgSeg}.bean`;
   return {
     name: struct.name,
     desc: struct.desc,
     fileName: module.fileName,
     moduleName: module.moduleName,
     javaClassName: struct.name,
-    javaPackage: `${opts.javaBasePackage}.${pkgSeg}.bean`,
+    javaPackage,
+    structImports: fieldStructImports(fields, javaPackage, structPackageMap),
     fields,
     csEncodeLines: genCsEncodeLines(fields, true),
     csDecodeLines: genCsDecodeLines(fields, true),
@@ -378,12 +413,13 @@ export function buildRenderModules(
   opts: ResolvedOptions,
 ): RenderModule[] {
   const structTypes = new Set(modules.flatMap((m) => (m.structs ?? []).map((struct) => struct.name)));
+  const structPackageMap = buildStructPackageMap(modules, opts);
   return modules.map((m) => ({
     fileName: m.fileName,
     moduleName: m.moduleName,
     desc: m.desc,
-    structs: (m.structs ?? []).map((struct) => buildRenderStruct(struct, m, opts, structTypes)),
-    messages: m.messages.map((msg) => buildRenderMessage(msg, m, opts, structTypes)),
+    structs: (m.structs ?? []).map((struct) => buildRenderStruct(struct, m, opts, structTypes, structPackageMap)),
+    messages: m.messages.map((msg) => buildRenderMessage(msg, m, opts, structTypes, structPackageMap)),
   }));
 }
 

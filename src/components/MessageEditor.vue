@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, reactive, watch } from "vue";
 import { NButton, NInput, NSelect, NSpace, NText, NPopconfirm, NModal, NTabs, NTabPane, useMessage } from "naive-ui";
+import type { SelectOption } from "naive-ui";
 import type { FieldDef, ModuleDef, MessageDef, StructDef } from "@/generator/types";
 
 const props = defineProps<{
   module: ModuleDef;
+  availableStructs?: Array<{ name: string; desc?: string; moduleName: string; fileName: string }>;
   focusMessageName?: string;
   focusTick?: number;
 }>();
@@ -14,10 +16,7 @@ const message = useMessage();
 const BASE_FIELD_TYPES = [
   { label: "int", value: "int" },
   { label: "long", value: "long" },
-  { label: "float", value: "float" },
-  { label: "double", value: "double" },
   { label: "string", value: "string" },
-  { label: "boolean", value: "boolean" },
 ];
 
 const MSG_TYPES = [
@@ -50,11 +49,44 @@ async function syncEditFromProps(resetSelection: boolean) {
   syncingFromProps = false;
 }
 
+const availableStructTypeOptions = computed(() => {
+  const map = new Map<string, { label: string; value: string; title: string }>();
+  for (const struct of props.availableStructs ?? []) {
+    const name = struct.name.trim();
+    if (!name) continue;
+    const source = struct.moduleName || struct.fileName;
+    map.set(name, {
+      label: name,
+      value: name,
+      title: `${name} · ${source}`,
+    });
+  }
+  for (const struct of edit.structs) {
+    const name = struct.name.trim();
+    if (!name) continue;
+    const source = edit.moduleName || edit.fileName;
+    map.set(name, {
+      label: name,
+      value: name,
+      title: `${name} · ${source}`,
+    });
+  }
+  return [...map.values()].sort((a, b) => a.value.localeCompare(b.value));
+});
+
 const fieldTypeOptions = computed(() => [
-  ...BASE_FIELD_TYPES,
-  ...edit.structs
-    .filter((struct) => struct.name.trim())
-    .map((struct) => ({ label: struct.name, value: struct.name })),
+  {
+    type: "group",
+    label: "基础类型",
+    key: "base",
+    children: BASE_FIELD_TYPES,
+  },
+  {
+    type: "group",
+    label: "对象",
+    key: "structs",
+    children: availableStructTypeOptions.value,
+  },
 ]);
 
 const FIELD_LIST_OPTIONS = [
@@ -114,7 +146,10 @@ const filteredMessages = computed(() => {
       return msg.name.toLowerCase().includes(keyword) || (msg.desc ?? "").toLowerCase().includes(keyword);
     });
 });
-const structNameSet = computed(() => new Set(edit.structs.map((struct) => struct.name.trim()).filter(Boolean)));
+const structNameSet = computed(() => new Set([
+  ...(props.availableStructs ?? []).map((struct) => struct.name.trim()).filter(Boolean),
+  ...edit.structs.map((struct) => struct.name.trim()).filter(Boolean),
+]));
 const primitiveTypeSet = new Set(BASE_FIELD_TYPES.map((item) => item.value));
 
 function normalizeSelection() {
@@ -286,6 +321,15 @@ function setFieldBaseType(field: FieldDef, type: string) {
 function setFieldListMode(field: FieldDef, mode: string) {
   const nextType = baseFieldType(field.type);
   field.type = mode === "list" ? `array<${nextType}>` : nextType;
+}
+
+function filterFieldType(pattern: string, option: SelectOption) {
+  const keyword = pattern.trim().toLowerCase();
+  if (!keyword) return true;
+  const value = String(option.value ?? "").toLowerCase();
+  const label = String(option.label ?? "").toLowerCase();
+  const title = String(option.title ?? "").toLowerCase();
+  return value.includes(keyword) || label.includes(keyword) || title.includes(keyword);
 }
 
 function normalizeJavaFieldType(type: string): string {
@@ -467,12 +511,12 @@ watch(filteredMessages, (items) => {
               >
               <div class="msg-header" :class="{ expanded: expandedNames.includes(selectedMessageIndex) }" @click="toggleExpand(selectedMessageIndex)">
                 <span class="msg-expand-icon">{{ expandedNames.includes(selectedMessageIndex) ? '▼' : '▶' }}</span>
-                <n-input v-model:value="selectedMessage.name" size="tiny" style="width:200px;font-family:monospace" placeholder="消息名" @click.stop />
-                <n-select v-model:value="selectedMessage.type" :options="MSG_TYPES" size="tiny" style="width:80px" @click.stop />
-                <n-input v-model:value="selectedMessage.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
+                <n-input v-model:value="selectedMessage.name" class="msg-name-input" size="tiny" placeholder="消息名" @click.stop />
+                <n-select v-model:value="selectedMessage.type" class="msg-type-select" :options="MSG_TYPES" size="tiny" @click.stop />
+                <n-input v-model:value="selectedMessage.desc" class="msg-desc-input" size="tiny" placeholder="描述" @click.stop />
                 <n-popconfirm @positive-click="removeMessage(selectedMessageIndex)">
                   <template #trigger>
-                    <n-button size="tiny" type="error" text @click.stop style="min-width:20px">✕</n-button>
+                    <n-button class="msg-delete-btn" size="tiny" type="error" text @click.stop>✕</n-button>
                   </template>
                   确定删除此消息？
                 </n-popconfirm>
@@ -495,9 +539,12 @@ watch(filteredMessages, (items) => {
                   <n-select
                     :value="baseFieldType(f.type)"
                     :options="fieldTypeOptions"
+                    :consistent-menu-width="false"
+                    filterable
+                    :filter="filterFieldType"
                     tag
                     size="tiny"
-                    style="width:140px"
+                    class="field-type-select"
                     @update:value="setFieldBaseType(f, String($event))"
                   />
                   <n-input v-model:value="f.name" size="tiny" style="width:160px;font-family:monospace" placeholder="字段名" />
@@ -564,11 +611,11 @@ watch(filteredMessages, (items) => {
               >
               <div class="msg-header" :class="{ expanded: expandedStructNames.includes(selectedStructIndex) }" @click="toggleStructExpand(selectedStructIndex)">
                 <span class="msg-expand-icon">{{ expandedStructNames.includes(selectedStructIndex) ? '▼' : '▶' }}</span>
-                <n-input v-model:value="selectedStruct.name" size="tiny" style="width:220px;font-family:monospace" placeholder="对象名" @click.stop />
-                <n-input v-model:value="selectedStruct.desc" size="tiny" style="flex:1" placeholder="描述" @click.stop />
+                <n-input v-model:value="selectedStruct.name" class="struct-name-input" size="tiny" placeholder="对象名" @click.stop />
+                <n-input v-model:value="selectedStruct.desc" class="struct-desc-input" size="tiny" placeholder="描述" @click.stop />
                 <n-popconfirm @positive-click="removeStruct(selectedStructIndex)">
                   <template #trigger>
-                    <n-button size="tiny" type="error" text @click.stop style="min-width:20px">✕</n-button>
+                    <n-button class="msg-delete-btn" size="tiny" type="error" text @click.stop>✕</n-button>
                   </template>
                   确定删除此对象？
                 </n-popconfirm>
@@ -591,9 +638,12 @@ watch(filteredMessages, (items) => {
                   <n-select
                     :value="baseFieldType(f.type)"
                     :options="fieldTypeOptions"
+                    :consistent-menu-width="false"
+                    filterable
+                    :filter="filterFieldType"
                     tag
                     size="tiny"
-                    style="width:140px"
+                    class="field-type-select"
                     @update:value="setFieldBaseType(f, String($event))"
                   />
                   <n-input v-model:value="f.name" size="tiny" style="width:160px;font-family:monospace" placeholder="字段名" />
@@ -670,17 +720,28 @@ watch(filteredMessages, (items) => {
 .msg-card { border:1px solid var(--border-subtle); border-radius:6px; margin-bottom:6px; overflow:hidden; transition:border-color .16s, box-shadow .16s; }
 .struct-card { border-color:var(--brand-active); }
 .msg-card.focused { border-color:var(--brand); box-shadow:0 0 0 1px var(--brand-soft); }
-.msg-header { display:flex; align-items:center; gap:6px; padding:6px 8px; cursor:pointer; background:var(--bg-panel); }
+.msg-header { display:grid; grid-template-columns:20px minmax(160px, 1fr) 96px minmax(180px, 1.35fr) 28px; align-items:center; column-gap:10px; padding:6px 8px; cursor:pointer; background:color-mix(in srgb, var(--bg-panel) 82%, var(--bg-input)); border-bottom:1px solid transparent; }
+.struct-card .msg-header { grid-template-columns:20px minmax(180px, 1fr) minmax(220px, 1.4fr) 28px; }
 .msg-header:hover { background:var(--bg-panel-hover); }
-.msg-header.expanded { background:var(--bg-input); border-bottom:1px solid var(--border-subtle); }
+.msg-header.expanded { background:color-mix(in srgb, var(--bg-input) 88%, var(--bg-panel)); border-bottom:1px solid var(--border-subtle); box-shadow:inset 0 -1px 0 rgba(255,255,255,.03); }
+.msg-header > * { min-width:0; }
 .msg-expand-icon { font-size:10px; color:var(--text-muted); width:14px; text-align:center; flex-shrink:0; }
+.msg-name-input,
+.struct-name-input { width:100%; font-family:monospace; }
+.msg-type-select { width:100%; min-width:0; }
+.msg-desc-input,
+.struct-desc-input { width:100%; min-width:0; }
+.msg-delete-btn { min-width:20px; }
 .msg-fields { padding:6px 8px 8px 28px; background:var(--bg-app); }
-.field-row { display:grid; grid-template-columns:140px 160px 86px minmax(160px, 1fr) 78px; align-items:center; gap:6px; margin-bottom:4px; }
+.field-row { display:grid; grid-template-columns:minmax(170px, 220px) minmax(130px, 160px) 86px minmax(150px, 1fr) 96px; align-items:center; gap:6px; margin-bottom:4px; }
+.field-type-select { width:100%; min-width:0; }
+.field-type-select :deep(.n-base-selection-label) { font-family:monospace; }
+.field-type-select :deep(.n-base-select-menu) { min-width:260px; max-width:420px; }
 .field-row:hover:not(.field-row--head) { background:var(--bg-panel); }
 .field-row.invalid { border-left:2px solid var(--warning); padding-left:4px; }
 .field-row--head { color:var(--text-muted); font-size:11px; padding:0 2px 4px; }
-.field-row-actions { display:flex; align-items:center; justify-content:flex-end; gap:2px; }
+.field-row-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; min-width:0; }
 .field-warning { grid-column:1 / -1; display:flex; gap:8px; color:var(--warning); font-size:11px; padding:0 0 2px 2px; }
 .field-actions { display:flex; gap:8px; margin-top:4px; }
-.field-delete-btn { min-width:20px; color:var(--danger); }
+.field-delete-btn { min-width:20px; flex-shrink:0; color:var(--danger); }
 </style>

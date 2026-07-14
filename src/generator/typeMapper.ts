@@ -38,16 +38,17 @@ const PRIMITIVE_TYPE_MAP: Record<string, BaseTypeMap> = {
   string: { cs: "String", java: "String", csWrite: "writeString", csRead: "readString", javaWrite: "writeString", javaRead: "readString" },
 };
 
-/** 默认基础类型（未识别时回退为 string） */
-const DEFAULT_TYPE_MAP: BaseTypeMap = PRIMITIVE_TYPE_MAP.string;
-
 /**
  * 解析基础类型映射
  * @param type 类型字符串，如 "int" / "string"
  */
 function resolvePrimitive(type: string): BaseTypeMap {
   const key = type.trim().toLowerCase();
-  return PRIMITIVE_TYPE_MAP[key] ?? DEFAULT_TYPE_MAP;
+  const mapped = PRIMITIVE_TYPE_MAP[key];
+  if (!mapped) {
+    throw new Error(`未知字段类型：${type}`);
+  }
+  return mapped;
 }
 
 function findStructType(type: string, structTypes: Set<string>): string | null {

@@ -123,6 +123,7 @@ export function usePreview(
 
   async function doPreview(
     selectedModule: ModuleDef | undefined,
+    allModules: ModuleDef[],
     canGenerate: boolean,
     frontendPath: string,
     backendPath: string,
@@ -141,14 +142,13 @@ export function usePreview(
     if (!runValidation()) return;
     if (!await autoAssignIds()) return;
     if (!runValidation()) return;
-    const mod = selectedModule;
     previewLoading.value = true;
     showPreviewModal.value = true;
     previewFiles.value = [];
     previewSkipped.value = [];
     previewActiveFile.value = "";
     try {
-      const modulesToPreview = [mod];
+      const modulesToPreview = allModules.length > 0 ? allModules : [selectedModule];
       const result = await previewProtocols(
         modulesToPreview,
         frontendPath,
