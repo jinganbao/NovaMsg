@@ -824,10 +824,6 @@ watch(showConfig, (show, prev) => {
             <n-button size="tiny" @click="handlePreview">预览</n-button>
             <n-button type="primary" size="tiny" :disabled="!canGenerate" @click="handleGenerate">生成</n-button>
           </div>
-          <div class="toolbar-group">
-            <n-button size="tiny" :disabled="!config.svnPath || svnCommitting" :loading="svnUpdating" @click="handleSvnUpdate">更新</n-button>
-            <n-button size="tiny" :disabled="!config.svnPath || svnUpdating" :loading="svnCommitting" @click="openSvnCommitModal">提交</n-button>
-          </div>
         </div>
       </div>
       <div class="editor-wrap">

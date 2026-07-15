@@ -371,7 +371,7 @@ export function buildRenderMessage(
     javaPackage,
     handlerPackage: `${opts.handlerBasePackage}.${pkgSeg}.handler`,
     handlerClassName: `${fullName}Handler`,
-    structImports: fieldStructImports(fields, `${opts.javaBasePackage}.${pkgSeg}.bean`, structPackageMap),
+    structImports: fieldStructImports(fields, javaPackage, structPackageMap),
     fields,
     csEncodeLines: genCsEncodeLines(fields, true),
     csDecodeLines: genCsDecodeLines(fields, true),
