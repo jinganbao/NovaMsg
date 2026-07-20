@@ -19,7 +19,7 @@ import {
   isClientSend,
   isServerHandle,
 } from "./renderModel";
-import { fileExists, joinPath, packageToPath, writeGeneratedFiles } from "./fsWrapper";
+import { joinPath, packageToPath, writeGeneratedFiles } from "./fsWrapper";
 import type { GeneratedFileToWrite } from "./fsWrapper";
 
 function assertUniqueOutputPath(
@@ -178,7 +178,7 @@ export interface PreviewFile {
 export interface PreviewResult {
   /** 将要生成的文件（含内容） */
   files: PreviewFile[];
-  /** 将跳过的 Handler 文件路径 */
+  /** 真实生成会跳过的 Handler 文件路径。预览为了便于检查模板内容，当前不跳过。 */
   skippedHandlerFiles: string[];
 }
 
@@ -274,14 +274,10 @@ export async function previewProtocols(
     })),
   });
 
-  // 7. Java XXXHandler.java（仅 C2S，标记已存在则跳过）
+  // 7. Java XXXHandler.java（仅 C2S，预览时始终展示模板内容；真实生成时才跳过已有 Handler）
   for (const msg of allMessages.filter((m) => m.type === "C2S")) {
     const dir = joinPath(javaPath, packageToPath(msg.handlerPackage));
     const filePath = joinPath(dir, `${msg.handlerClassName}.java`);
-    if (await fileExists(filePath)) {
-      skippedHandlerFiles.push(filePath);
-      continue;
-    }
     files.push({
       path: filePath,
       content: formatGeneratedJava(templates.javaHandler({ ...msg, author: opts.author })),

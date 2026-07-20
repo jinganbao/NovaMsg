@@ -326,7 +326,7 @@ public class MessageId {
  */
 export const GAME_HANDLER_MANAGER_JAVA = `package {{gameHandlerManagerPackage}};
 
-import com.rilon.common.log.BaseLogger;
+import com.rilon.gamebase.log.GameLogger;
 import com.rilon.core.session.message.MessagePool;
 
 /**
@@ -340,7 +340,7 @@ public class GameHandlerManager {
   /**
    * 日志
    */
-  private static final BaseLogger LOGGER = new BaseLogger(GameHandlerManager.class);
+  private static final GameLogger LOGGER = new GameLogger(GameHandlerManager.class);
 
   ;
 
@@ -377,7 +377,7 @@ public class GameHandlerManager {
  */
 export const JAVA_HANDLER = `package {{handlerPackage}};
 
-import com.rilon.common.log.BaseLogger;
+import com.rilon.gamebase.log.GameLogger;
 import com.rilon.core.command.MessageHandler;
 import {{javaPackage}}.{{javaClassName}};
 
@@ -390,7 +390,7 @@ public class {{handlerClassName}} extends MessageHandler<{{javaClassName}}> {
     /**
      * 日志
      */
-    private static final BaseLogger LOGGER = new BaseLogger({{handlerClassName}}.class);
+    private static final GameLogger LOGGER = new GameLogger({{handlerClassName}}.class);
 
     @Override
     public void action() {
