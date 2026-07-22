@@ -95,10 +95,12 @@ export interface MappedField {
 
 /** 渲染用的对象结构模型 */
 export interface RenderStruct {
+  /** 生成后的对象类名，统一以 Bean 结尾 */
   name: string;
   desc: string;
   fileName: string;
   moduleName: string;
+  /** Java 对象类名，与 name 一致 */
   javaClassName: string;
   javaPackage: string;
   /** Java 对象类需要导入的其它 Bean 类 */

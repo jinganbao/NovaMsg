@@ -14,7 +14,7 @@ import type {
   GenerateOptions,
   MessageType,
 } from "./types";
-import { mapFieldsWithStructs } from "./typeMapper";
+import { mapFieldsWithStructs, toStructClassName } from "./typeMapper";
 
 // ============================================================
 // 缩进常量
@@ -315,7 +315,7 @@ function buildStructPackageMap(
     const pkgSeg = moduleToPackageSeg(mod.moduleName, opts.modulePackageMap);
     for (const struct of mod.structs ?? []) {
       if (struct.name.trim()) {
-        map.set(struct.name.trim(), `${opts.javaBasePackage}.${pkgSeg}.bean`);
+        map.set(toStructClassName(struct.name), `${opts.javaBasePackage}.${pkgSeg}.bean`);
       }
     }
   }
@@ -391,12 +391,13 @@ export function buildRenderStruct(
   const pkgSeg = moduleToPackageSeg(module.moduleName, opts.modulePackageMap);
   const fields = mapFieldsWithStructs(struct.fields, structTypes);
   const javaPackage = `${opts.javaBasePackage}.${pkgSeg}.bean`;
+  const className = toStructClassName(struct.name);
   return {
-    name: struct.name,
+    name: className,
     desc: struct.desc,
     fileName: module.fileName,
     moduleName: module.moduleName,
-    javaClassName: struct.name,
+    javaClassName: className,
     javaPackage,
     structImports: fieldStructImports(fields, javaPackage, structPackageMap),
     fields,

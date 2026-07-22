@@ -59,6 +59,12 @@ function findStructType(type: string, structTypes: Set<string>): string | null {
   return null;
 }
 
+/** XML 对象名到生成代码类名的统一映射。 */
+export function toStructClassName(name: string): string {
+  const clean = name.trim();
+  return clean.endsWith("Bean") ? clean : `${clean}Bean`;
+}
+
 /** 解析数组类型，返回元素类型字符串；若非数组返回 null */
 function parseArrayElement(type: string): string | null {
   const clean = type.trim();
@@ -87,10 +93,11 @@ export function mapField(field: FieldDef, structTypes = new Set<string>()): Mapp
 
   if (isArray) {
     const structType = findStructType(elementTypeRaw!, structTypes);
+    const structClassName = structType ? toStructClassName(structType) : null;
     const elem = structType
       ? {
-          cs: structType,
-          java: structType,
+          cs: structClassName!,
+          java: structClassName!,
           csWrite: "",
           csRead: "",
           javaWrite: "",
@@ -124,6 +131,7 @@ export function mapField(field: FieldDef, structTypes = new Set<string>()): Mapp
 
   const structType = findStructType(field.type, structTypes);
   if (structType) {
+    const structClassName = toStructClassName(structType);
     return {
       name: field.name,
       csName,
@@ -131,8 +139,8 @@ export function mapField(field: FieldDef, structTypes = new Set<string>()): Mapp
       desc: field.desc,
       isArray: false,
       isStruct: true,
-      csType: structType,
-      javaType: structType,
+      csType: structClassName,
+      javaType: structClassName,
       csWrite: "",
       csRead: "",
       javaWrite: "",
