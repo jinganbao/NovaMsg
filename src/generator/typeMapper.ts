@@ -51,6 +51,20 @@ function resolvePrimitive(type: string): BaseTypeMap {
   return mapped;
 }
 
+/** Java 泛型不接受基本类型，集合元素统一转换为包装类型。 */
+function toJavaGenericType(type: string): string {
+  const boxedTypes: Record<string, string> = {
+    int: "Integer",
+    short: "Short",
+    long: "Long",
+    byte: "Byte",
+    boolean: "Boolean",
+    float: "Float",
+    double: "Double",
+  };
+  return boxedTypes[type] ?? type;
+}
+
 function findStructType(type: string, structTypes: Set<string>): string | null {
   const clean = type.trim();
   for (const item of structTypes) {
@@ -94,6 +108,7 @@ export function mapField(field: FieldDef, structTypes = new Set<string>()): Mapp
   if (isArray) {
     const structType = findStructType(elementTypeRaw!, structTypes);
     const structClassName = structType ? toStructClassName(structType) : null;
+    const primitiveType = structType ? null : resolvePrimitive(elementTypeRaw!);
     const elem = structType
       ? {
           cs: structClassName!,
@@ -103,7 +118,10 @@ export function mapField(field: FieldDef, structTypes = new Set<string>()): Mapp
           javaWrite: "",
           javaRead: "",
         }
-      : resolvePrimitive(elementTypeRaw!);
+      : {
+          ...primitiveType!,
+          java: toJavaGenericType(primitiveType!.java),
+        };
     return {
       name: field.name,
       csName,

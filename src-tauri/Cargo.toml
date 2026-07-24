@@ -1,6 +1,6 @@
 [package]
 name = "NovaMsg"
-version = "1.1.0"
+version = "1.1.1"
 description = "游戏前后端网络协议一键生成工具"
 authors = ["Sunshine"]
 edition = "2021"
