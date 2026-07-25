@@ -188,6 +188,7 @@ const {
   clearConfirmText,
   canClearMessageIds,
   autoAssignIds: autoAssignIdsRaw,
+  resetOutOfRangeMessageIds,
   handleClearMessageIds: handleClearMessageIdsRaw,
 } = useMessageIds(config, message);
 
@@ -348,6 +349,12 @@ async function autoAssignIds() {
   });
 }
 
+function prepareMessageIdsForValidation(): boolean {
+  if (!syncXmlEditorToModule()) return false;
+  resetOutOfRangeMessageIds(parsedModules.value);
+  return true;
+}
+
 // ---------- 保存 ----------
 function getPromptTitle() {
   const a = pendingAction.value;
@@ -376,8 +383,11 @@ function syncXmlEditorToModule(): boolean {
 async function saveCurrentFile(): Promise<boolean> {
   applyManagedMessagePaths(config);
   if (!activeFile.value || !config.xmlPath) return false;
-  if (!runValidation()) return false;
   await ensureManagedDirs();
+  if (!prepareMessageIdsForValidation()) return false;
+  if (!runValidation()) return false;
+  if (!await autoAssignIds()) return false;
+  if (!runValidation()) return false;
   const sep = config.xmlPath.endsWith("/") ? "" : "/";
   const filePath = `${config.xmlPath}${sep}${activeFile.value}`;
   if (viewMode.value === "form" && selectedModule.value) {
@@ -615,6 +625,7 @@ async function doGenerate() {
     return;
   }
   await ensureManagedDirs();
+  if (!prepareMessageIdsForValidation()) return;
   if (!runValidation()) return;
   if (!await autoAssignIds()) return;
   if (!runValidation()) return;
@@ -639,6 +650,7 @@ async function doGenerate() {
 // ---------- 预览 ----------
 async function doPreview() {
   await ensureManagedDirs();
+  if (!prepareMessageIdsForValidation()) return;
   await doPreviewRaw(
     selectedModule.value,
     parsedModules.value,

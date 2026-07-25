@@ -19,7 +19,7 @@ import {
   isClientSend,
   isServerHandle,
 } from "./renderModel";
-import { joinPath, packageToPath, writeGeneratedFiles } from "./fsWrapper";
+import { cleanGeneratedJavaFiles, joinPath, packageToPath, writeGeneratedFiles } from "./fsWrapper";
 import type { GeneratedFileToWrite } from "./fsWrapper";
 
 function assertUniqueOutputPath(
@@ -165,6 +165,15 @@ export async function generateProtocols(
     const content = formatGeneratedJava(templates.javaHandler({ ...msg, author: opts.author }));
     filesToWrite.push({ path: filePath, contents: content, skipIfExists: true });
   }
+
+  const preservedHandlers = allMessages
+    .filter((msg) => isServerHandle(msg.type))
+    .map((msg) => joinPath(
+      javaPath,
+      packageToPath(msg.handlerPackage),
+      `${msg.handlerClassName}.java`,
+    ));
+  await cleanGeneratedJavaFiles(javaPath, preservedHandlers);
 
   return await writeGeneratedFiles(filesToWrite);
 }

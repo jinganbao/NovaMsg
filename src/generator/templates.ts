@@ -166,8 +166,10 @@ namespace Com.Rilon.Gamebase.Message
 export const JAVA_STRUCT = `package {{javaPackage}};
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+{{#if hasListFields}}
 import java.util.ArrayList;
 import java.util.List;
+{{/if}}
 import com.rilon.core.session.message.Bean;
 {{#each structImports}}import {{this}};
 {{/each}}
@@ -218,8 +220,10 @@ public class {{javaClassName}} extends Bean {
 export const JAVA_MESSAGE = `package {{javaPackage}};
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+{{#if hasListFields}}
 import java.util.ArrayList;
 import java.util.List;
+{{/if}}
 import com.rilon.core.session.message.Message;
 {{#each structImports}}import {{this}};
 {{/each}}import lombok.Getter;

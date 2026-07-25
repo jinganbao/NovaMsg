@@ -20,6 +20,11 @@ function errMsg(e: unknown): string {
   return String(e ?? "未知错误");
 }
 
+function isIdInTypeRange(type: string, id: number): boolean {
+  const range = ID_RANGES[type];
+  return !!range && id >= range[0] && id <= range[1];
+}
+
 export function useMessageIds(
   config: { xmlPath: string; frontendPath: string; backendPath: string },
   message: { success: (m: string) => void; error: (m: string) => void },
@@ -29,7 +34,23 @@ export function useMessageIds(
   const canClearMessageIds = computed(() => clearConfirmText.value.trim() === "CLEAR");
 
   /**
-   * 为所有 id==0 的消息分配稳定 ID（按类型分区间）。
+   * 消息方向改变后，旧 ID 不再属于新方向区间时，将其标记为待重新分配。
+   */
+  function resetOutOfRangeMessageIds(parsedModules: ModuleDef[]): boolean {
+    let changed = false;
+    for (const mod of parsedModules) {
+      for (const msg of mod.messages) {
+        if (msg.id > 0 && !isIdInTypeRange(msg.type, msg.id)) {
+          msg.id = 0;
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
+  /**
+   * 为所有缺失或不属于当前类型区间的消息分配稳定 ID（按类型分区间）。
    * ID 直接写入 XML 文件，确保多人协作时一致。
    */
   async function autoAssignIds(
@@ -37,6 +58,7 @@ export function useMessageIds(
     selectedModule: ModuleDef | undefined,
     onEditorUpdate: (xml: string) => void,
   ): Promise<boolean> {
+    resetOutOfRangeMessageIds(parsedModules);
     const hasMissingId = parsedModules.some((mod) => mod.messages.some((msg) => msg.id === 0));
     if (hasMissingId && !config.xmlPath) {
       message.error("消息 ID 需要写回 XML，请先选择消息目录");
@@ -47,7 +69,7 @@ export function useMessageIds(
     const maxByType: Record<string, number> = {};
     for (const mod of parsedModules) {
       for (const msg of mod.messages) {
-        if (msg.id > 0 && ID_RANGES[msg.type]) {
+        if (msg.id > 0 && isIdInTypeRange(msg.type, msg.id)) {
           if (!maxByType[msg.type] || msg.id > maxByType[msg.type]) {
             maxByType[msg.type] = msg.id;
           }
@@ -171,6 +193,7 @@ export function useMessageIds(
     clearConfirmText,
     canClearMessageIds,
     autoAssignIds,
+    resetOutOfRangeMessageIds,
     resetLoadedMessageIds,
     handleClearMessageIds,
   };

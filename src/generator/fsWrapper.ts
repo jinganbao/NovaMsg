@@ -3,7 +3,7 @@
  *
  * 基于 @tauri-apps/plugin-fs，提供文件读写、目录创建、文件存在检测。
  */
-import { writeTextFile, readTextFile, mkdir, exists } from "@tauri-apps/plugin-fs";
+import { writeTextFile, readTextFile, readDir, mkdir, remove, exists } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
 
 export interface GeneratedFileToWrite {
@@ -65,6 +65,44 @@ export async function ensureDir(dirPath: string): Promise<void> {
   } catch {
     // 并发创建时可能已存在，忽略
   }
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "");
+}
+
+/**
+ * 清理后端生成目录中的旧 Java 文件。
+ * 当前协议仍在使用的 Handler 会被保留，避免覆盖手写业务逻辑。
+ */
+export async function cleanGeneratedJavaFiles(
+  rootPath: string,
+  preservedFiles: string[] = [],
+): Promise<string[]> {
+  const root = normalizePath(rootPath);
+  if (!root || !(await exists(root))) return [];
+  if (root.split("/").pop()?.toLowerCase() !== "java") {
+    throw new Error(`拒绝清理非 java 生成目录：${root}`);
+  }
+
+  const preserved = new Set(preservedFiles.map(normalizePath));
+  const removedFiles: string[] = [];
+
+  async function walk(dirPath: string): Promise<void> {
+    const entries = await readDir(dirPath);
+    for (const entry of entries) {
+      const path = joinPath(dirPath, entry.name);
+      if (entry.isDirectory && !entry.isSymlink && entry.name !== ".svn" && entry.name !== ".git") {
+        await walk(path);
+      } else if (entry.isFile && entry.name.endsWith(".java") && !preserved.has(normalizePath(path))) {
+        await remove(path);
+        removedFiles.push(path);
+      }
+    }
+  }
+
+  await walk(root);
+  return removedFiles;
 }
 
 /**

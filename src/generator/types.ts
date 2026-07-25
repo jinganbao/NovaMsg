@@ -105,6 +105,8 @@ export interface RenderStruct {
   javaPackage: string;
   /** Java 对象类需要导入的其它 Bean 类 */
   structImports: string[];
+  /** 是否包含 List 字段，用于按需导入集合类型 */
+  hasListFields: boolean;
   fields: MappedField[];
   csEncodeLines: string[];
   csDecodeLines: string[];
@@ -133,6 +135,8 @@ export interface RenderMessage {
   handlerClassName: string;
   /** Java 消息类需要导入的 Bean 类 */
   structImports: string[];
+  /** 是否包含 List 字段，用于按需导入集合类型 */
+  hasListFields: boolean;
   /** 处理后的字段列表 */
   fields: MappedField[];
   /** C# encode 方法体行（含缩进，不含方法签名） */
