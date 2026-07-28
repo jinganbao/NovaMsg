@@ -69,7 +69,7 @@ export interface MappedField {
   isArray: boolean;
   /** 是否为自定义对象类型 */
   isStruct: boolean;
-  /** C# 字段类型，如 "int" / "String" / "RepeatedField<String>" */
+  /** C# 字段类型，如 "int" / "String" / "List<String>" */
   csType: string;
   /** Java 字段类型，如 "int" / "String" / "List<String>" */
   javaType: string;

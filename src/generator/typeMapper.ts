@@ -129,7 +129,7 @@ export function mapField(field: FieldDef, structTypes = new Set<string>()): Mapp
       desc: field.desc,
       isArray: true,
       isStruct: structType !== null,
-      csType: `RepeatedField<${elem.cs}>`,
+      csType: `List<${elem.cs}>`,
       javaType: `List<${elem.java}>`,
       csWrite: elem.csWrite,
       csRead: elem.csRead,

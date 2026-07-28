@@ -27,7 +27,6 @@ Handlebars.registerHelper("capitalize", function (str: string) {
 export const MESSAGE_BEANS_CS = `using System;
 using System.Collections.Generic;
 using GameLogic;
-using GameCore.ProtoCollections;
 
 namespace GameCore.Message
 {

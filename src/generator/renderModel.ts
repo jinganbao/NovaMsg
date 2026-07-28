@@ -119,7 +119,7 @@ function genCsDecodeLines(fields: MappedField[], tagged: boolean): string[] {
 function pushCsFieldRead(lines: string[], f: MappedField, indent: string, bufVar = "buf", target = `this.${f.csName}`): void {
   if (f.isArray) {
     lines.push(`${indent}int ${f.csName}_length =readShort(${bufVar});`);
-    lines.push(`${indent}${target}=new RepeatedField<${f.element!.csType}>();`);
+    lines.push(`${indent}${target}=new List<${f.element!.csType}>();`);
     lines.push(`${indent}for (int i = 0; i < ${f.csName}_length; i++) {`);
     const inner = indent + T;
     if (f.element?.isStruct) {
