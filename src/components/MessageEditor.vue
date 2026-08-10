@@ -7,6 +7,7 @@ import type { FieldDef, ModuleDef, MessageDef, StructDef } from "@/generator/typ
 const props = defineProps<{
   module: ModuleDef;
   availableStructs?: Array<{ name: string; desc?: string; moduleName: string; fileName: string }>;
+  availableS2cMessages?: Array<{ name: string; desc?: string; moduleName: string; fileName: string }>;
   focusMessageName?: string;
   focusTick?: number;
 }>();
@@ -88,6 +89,23 @@ const fieldTypeOptions = computed(() => [
     children: availableStructTypeOptions.value,
   },
 ]);
+
+function messageFullName(name: string, type: "C2S" | "S2C" | "P2S" | "S2P"): string {
+  const value = name.trim();
+  return value.startsWith(`${type}_`) ? value : `${type}_${value}`;
+}
+
+const callbackMessageOptions = computed<SelectOption[]>(() => {
+  const options = new Map<string, SelectOption>();
+  for (const msg of props.availableS2cMessages ?? []) {
+    const value = messageFullName(msg.name, "S2C");
+    options.set(value, {
+      label: `${value} · ${msg.fileName || msg.moduleName}`,
+      value,
+    });
+  }
+  return [...options.values()].sort((a, b) => String(a.value).localeCompare(String(b.value)));
+});
 
 const FIELD_LIST_OPTIONS = [
   { label: "单个", value: "single" },
@@ -202,10 +220,15 @@ async function scrollMessageIntoView(index: number) {
 }
 
 function addMessage() {
-  edit.messages.push({ id: 0, name: "", type: "C2S", desc: "", fields: [] });
+  edit.messages.push({ id: 0, name: "", type: "C2S", desc: "", callback: "", fields: [] });
   activeEditorTab.value = "messages";
   selectedMessageIndex.value = edit.messages.length - 1;
   expandedNames.value = [selectedMessageIndex.value];
+}
+
+function setMessageType(msg: MessageDef, value: string) {
+  msg.type = value as MessageDef["type"];
+  if (msg.type !== "C2S") msg.callback = "";
 }
 
 function removeMessage(index: number) {
@@ -509,11 +532,38 @@ watch(filteredMessages, (items) => {
                 :class="{ focused: focusedMessageIndex === selectedMessageIndex }"
                 :data-message-index="selectedMessageIndex"
               >
-              <div class="msg-header" :class="{ expanded: expandedNames.includes(selectedMessageIndex) }" @click="toggleExpand(selectedMessageIndex)">
+              <div
+                class="msg-header"
+                :class="{
+                  expanded: expandedNames.includes(selectedMessageIndex),
+                  'has-callback': selectedMessage.type === 'C2S',
+                }"
+                @click="toggleExpand(selectedMessageIndex)"
+              >
                 <span class="msg-expand-icon">{{ expandedNames.includes(selectedMessageIndex) ? '▼' : '▶' }}</span>
                 <n-input v-model:value="selectedMessage.name" class="msg-name-input" size="tiny" placeholder="消息名" @click.stop />
-                <n-select v-model:value="selectedMessage.type" class="msg-type-select" :options="MSG_TYPES" size="tiny" @click.stop />
+                <n-select
+                  :value="selectedMessage.type"
+                  class="msg-type-select"
+                  :options="MSG_TYPES"
+                  size="tiny"
+                  @click.stop
+                  @update:value="setMessageType(selectedMessage, String($event))"
+                />
                 <n-input v-model:value="selectedMessage.desc" class="msg-desc-input" size="tiny" placeholder="描述" @click.stop />
+                <n-select
+                  v-if="selectedMessage.type === 'C2S'"
+                  :value="selectedMessage.callback || null"
+                  class="msg-callback-select"
+                  :options="callbackMessageOptions"
+                  :consistent-menu-width="false"
+                  filterable
+                  clearable
+                  size="tiny"
+                  placeholder="选择回调消息（可选）"
+                  @click.stop
+                  @update:value="selectedMessage.callback = $event ? String($event) : ''"
+                />
                 <n-popconfirm @positive-click="removeMessage(selectedMessageIndex)">
                   <template #trigger>
                     <n-button class="msg-delete-btn" size="tiny" type="error" text @click.stop>✕</n-button>
@@ -721,6 +771,7 @@ watch(filteredMessages, (items) => {
 .struct-card { border-color:var(--brand-active); }
 .msg-card.focused { border-color:var(--brand); box-shadow:0 0 0 1px var(--brand-soft); }
 .msg-header { display:grid; grid-template-columns:20px minmax(160px, 1fr) 96px minmax(180px, 1.35fr) 28px; align-items:center; column-gap:10px; padding:6px 8px; cursor:pointer; background:color-mix(in srgb, var(--bg-panel) 82%, var(--bg-input)); border-bottom:1px solid transparent; }
+.msg-header.has-callback { grid-template-columns:20px minmax(150px, .9fr) 86px minmax(180px, 1.15fr) minmax(190px, 1fr) 28px; }
 .struct-card .msg-header { grid-template-columns:20px minmax(180px, 1fr) minmax(220px, 1.4fr) 28px; }
 .msg-header:hover { background:var(--bg-panel-hover); }
 .msg-header.expanded { background:color-mix(in srgb, var(--bg-input) 88%, var(--bg-panel)); border-bottom:1px solid var(--border-subtle); box-shadow:inset 0 -1px 0 rgba(255,255,255,.03); }
@@ -729,6 +780,8 @@ watch(filteredMessages, (items) => {
 .msg-name-input,
 .struct-name-input { width:100%; font-family:monospace; }
 .msg-type-select { width:100%; min-width:0; }
+.msg-callback-select { width:100%; min-width:0; }
+.msg-callback-select :deep(.n-base-select-menu) { min-width:300px; max-width:520px; }
 .msg-desc-input,
 .struct-desc-input { width:100%; min-width:0; }
 .msg-delete-btn { min-width:20px; }

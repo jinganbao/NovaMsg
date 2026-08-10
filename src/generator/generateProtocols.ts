@@ -4,7 +4,7 @@
  * 入口：generateProtocols(modules, csharpPath, javaPath, options?)
  *
  * 产物：
- *   C#  - MessageBeans.cs（汇总）、MessagePool.cs（汇总）
+ *   C#  - MessageBeans.cs、MessagePool.cs、MessageCallBack.cs（汇总）
  *   Java - 每消息一个 XXXMessage.java、MessageId.java（汇总）、
  *          GameHandlerManager.java（汇总，仅 C2S/P2S 注册）、
  *          XXXHandler.java（仅 C2S，已存在则跳过）
@@ -45,6 +45,7 @@ function assertUniqueGeneratedPaths(
   const seen = new Map<string, string>();
   assertUniqueOutputPath(seen, joinPath(csharpPath, "MessageBeans.cs"), "C# MessageBeans");
   assertUniqueOutputPath(seen, joinPath(csharpPath, "MessagePool.cs"), "C# MessagePool");
+  assertUniqueOutputPath(seen, joinPath(csharpPath, "MessageCallBack.cs"), "C# MessageCallBack");
 
   for (const struct of allStructs) {
     const dir = joinPath(javaPath, packageToPath(struct.javaPackage));
@@ -112,7 +113,15 @@ export async function generateProtocols(
   const messagePoolPath = joinPath(csharpPath, "MessagePool.cs");
   filesToWrite.push({ path: messagePoolPath, contents: messagePoolContent });
 
-  // ---------- 3. Java 对象类（每 Struct 一个文件，按模块分包） ----------
+  // ---------- 3. C# MessageCallBack.cs ----------
+  const callbackMessages = allMessages.filter((m) => m.type === "C2S" && m.callback);
+  const messageCallbackContent = formatGeneratedCSharp(templates.messageCallbackCs({ callbackMessages }));
+  filesToWrite.push({
+    path: joinPath(csharpPath, "MessageCallBack.cs"),
+    contents: messageCallbackContent,
+  });
+
+  // ---------- 4. Java 对象类（每 Struct 一个文件，按模块分包） ----------
   for (const struct of allStructs) {
     const content = formatGeneratedJava(templates.javaStruct({ ...struct, author: opts.author }));
     const dir = joinPath(javaPath, packageToPath(struct.javaPackage));
@@ -120,7 +129,7 @@ export async function generateProtocols(
     filesToWrite.push({ path: filePath, contents: content });
   }
 
-  // ---------- 4. Java 实体类（每消息一个文件，按模块分包） ----------
+  // ---------- 5. Java 实体类（每消息一个文件，按模块分包） ----------
   for (const msg of allMessages) {
     const content = formatGeneratedJava(templates.javaMessage({ ...msg, author: opts.author }));
     const dir = joinPath(javaPath, packageToPath(msg.javaPackage));
@@ -128,7 +137,7 @@ export async function generateProtocols(
     filesToWrite.push({ path: filePath, contents: content });
   }
 
-  // ---------- 5. Java MessageId.java ----------
+  // ---------- 6. Java MessageId.java ----------
   const s2pIdMsgs = allMessages.filter((m) => m.type === "S2P");
   const p2sIdMsgs = allMessages.filter((m) => m.type === "P2S");
   const s2cIdMsgs = allMessages.filter((m) => m.type === "S2C");
@@ -147,7 +156,7 @@ export async function generateProtocols(
   const messageIdPath = joinPath(messageIdDir, "MessageId.java");
   filesToWrite.push({ path: messageIdPath, contents: messageIdContent });
 
-  // ---------- 6. Java GameHandlerManager.java（仅 C2S/P2S 注册） ----------
+  // ---------- 7. Java GameHandlerManager.java（仅 C2S/P2S 注册） ----------
   const handlerRegMsgs = allMessages.filter((m) => isServerHandle(m.type));
   const gameHandlerManagerContent = formatGeneratedJava(templates.gameHandlerManagerJava({
     gameHandlerManagerPackage: opts.gameHandlerManagerPackage,
@@ -158,7 +167,7 @@ export async function generateProtocols(
   const gameHandlerManagerPath = joinPath(gameHandlerManagerDir, "GameHandlerManager.java");
   filesToWrite.push({ path: gameHandlerManagerPath, contents: gameHandlerManagerContent });
 
-  // ---------- 7. Java XXXHandler.java（仅 C2S，已存在则跳过） ----------
+  // ---------- 8. Java XXXHandler.java（仅 C2S，已存在则跳过） ----------
   for (const msg of allMessages.filter((m) => m.type === "C2S")) {
     const dir = joinPath(javaPath, packageToPath(msg.handlerPackage));
     const filePath = joinPath(dir, `${msg.handlerClassName}.java`);
@@ -233,7 +242,14 @@ export async function previewProtocols(
     })),
   });
 
-  // 3. Java 对象类
+  // 3. C# MessageCallBack.cs
+  const callbackMessages = allMessages.filter((m) => m.type === "C2S" && m.callback);
+  files.push({
+    path: joinPath(csharpPath, "MessageCallBack.cs"),
+    content: formatGeneratedCSharp(templates.messageCallbackCs({ callbackMessages })),
+  });
+
+  // 4. Java 对象类
   for (const struct of allStructs) {
     const dir = joinPath(javaPath, packageToPath(struct.javaPackage));
     files.push({

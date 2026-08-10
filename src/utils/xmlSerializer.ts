@@ -26,6 +26,9 @@ export function moduleToXml(mod: ModuleDef): string {
     if (msg.id > 0) msgAttrs.push(`id="${msg.id}"`);
     msgAttrs.push(`name="${esc(msg.name)}"`, `type="${esc(msg.type)}"`);
     if (msg.desc) msgAttrs.push(`desc="${esc(msg.desc)}"`);
+    if (msg.type === "C2S" && msg.callback?.trim()) {
+      msgAttrs.push(`callback="${esc(msg.callback.trim())}"`);
+    }
     lines.push(`  <Message ${msgAttrs.join(" ")}>`);
     for (const f of msg.fields) {
       const fAttrs = [

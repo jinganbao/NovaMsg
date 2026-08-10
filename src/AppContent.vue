@@ -8,6 +8,7 @@ import {
   NModal,
   NSpin,
   NProgress,
+  NSelect,
   NSwitch,
   useMessage,
 } from "naive-ui";
@@ -276,6 +277,19 @@ const availableStructs = computed(() =>
       moduleName: mod.moduleName,
       fileName: mod.fileName,
     })),
+  ),
+);
+
+const availableS2cMessages = computed(() =>
+  parsedModules.value.flatMap((mod) =>
+    mod.messages
+      .filter((msg) => msg.type === "S2C")
+      .map((msg) => ({
+        name: msg.name,
+        desc: msg.desc,
+        moduleName: mod.moduleName,
+        fileName: mod.fileName,
+      })),
   ),
 );
 
@@ -843,6 +857,7 @@ watch(showConfig, (show, prev) => {
           <MessageEditor
             :module="selectedModule"
             :available-structs="availableStructs"
+            :available-s2c-messages="availableS2cMessages"
             :focus-message-name="messageEditorFocusName"
             :focus-tick="messageEditorFocusTick"
             @changed="onFormChanged"

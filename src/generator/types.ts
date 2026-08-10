@@ -25,6 +25,8 @@ export interface MessageDef {
   type: MessageType;
   /** 消息描述 */
   desc: string;
+  /** C2S 消息绑定的 S2C 回调消息名 */
+  callback?: string;
   /** 字段列表 */
   fields: FieldDef[];
 }
@@ -121,6 +123,8 @@ export interface RenderMessage {
   name: string;
   type: MessageType;
   desc: string;
+  /** C2S 消息绑定的完整 S2C 回调消息名 */
+  callback?: string;
   /** 来源文件名，如 "common_message.xml" */
   fileName: string;
   /** 所属模块名 */

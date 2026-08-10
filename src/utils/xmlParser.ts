@@ -46,6 +46,7 @@ function parseMessage(node: Record<string, unknown>): MessageDef {
     name: String(node.name ?? ""),
     type: String(node.type ?? "S2C") as MessageType,
     desc: String(node.desc ?? ""),
+    callback: String(node.callback ?? ""),
     fields: toArray(node.Field as Record<string, unknown>[] | undefined).map(parseField),
   };
 }

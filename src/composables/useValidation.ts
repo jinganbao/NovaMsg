@@ -168,6 +168,12 @@ export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
   const globalStructNames = new Set(
     modules.flatMap((mod) => (mod.structs ?? []).map((struct) => struct.name.trim()).filter(Boolean)),
   );
+  const s2cMessageNames = new Set(
+    modules.flatMap((mod) => mod.messages
+      .filter((msg) => msg.type === "S2C")
+      .map((msg) => messageClassName("S2C", msg.name.trim()))
+      .filter((name) => name !== "S2C_")),
+  );
 
   for (const mod of modules) {
     const fileName = mod.fileName || "未命名文件";
@@ -248,6 +254,17 @@ export function validateModules(modules: ModuleDef[]): ValidationIssue[] {
         const [minId, maxId] = idRanges[msg.type];
         if (msg.id < minId || msg.id > maxId) {
           issues.push({ level: "error", fileName, target, message: `${msg.type} 消息 ID 超出范围：${msg.id}，应在 ${minId}-${maxId}` });
+        }
+      }
+      const callback = msg.callback?.trim();
+      if (callback) {
+        if (msg.type !== "C2S") {
+          issues.push({ level: "error", fileName, target, message: "只有 C2S 消息可以绑定回调消息" });
+        } else {
+          const callbackName = messageClassName("S2C", callback);
+          if (!s2cMessageNames.has(callbackName)) {
+            issues.push({ level: "error", fileName, target, message: `绑定的 S2C 回调消息不存在：${callbackName}` });
+          }
         }
       }
       if (msg.id > 0) {

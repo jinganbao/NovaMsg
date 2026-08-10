@@ -348,6 +348,12 @@ function ensurePrefix(name: string, type: string): string {
   return prefix + name;
 }
 
+function normalizeCallbackName(name: string | undefined): string | undefined {
+  const value = name?.trim();
+  if (!value) return undefined;
+  return ensurePrefix(value, "S2C");
+}
+
 /** 构建单个渲染消息 */
 export function buildRenderMessage(
   msg: MessageDef,
@@ -365,6 +371,7 @@ export function buildRenderMessage(
     name: fullName,
     type: msg.type,
     desc: msg.desc,
+    callback: msg.type === "C2S" ? normalizeCallbackName(msg.callback) : undefined,
     fileName: module.fileName,
     moduleName: module.moduleName,
     javaClassName: `${fullName}Message`,

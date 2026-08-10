@@ -160,6 +160,23 @@ namespace Com.Rilon.Gamebase.Message
 `;
 
 /**
+ * 3. C# MessageCallBack.cs（C2S 请求到 S2C 回调的绑定表）
+ */
+export const MESSAGE_CALLBACK_CS = `using System.Collections.Generic;
+
+public class MessageCallBack
+{
+    public static Dictionary<string, string> msgCallBack = new Dictionary<string, string>();
+
+    public static void init()
+    {
+        msgCallBack.Clear();
+{{#each callbackMessages}}        msgCallBack.Add(Message.{{name}}, Message.{{callback}});
+{{/each}}    }
+}
+`;
+
+/**
  * 3. Java 对象类 XXX.java（按模块分包，每对象一个文件）
  */
 export const JAVA_STRUCT = `package {{javaPackage}};
@@ -416,6 +433,7 @@ export const templates = {
   messageBeansCs: Handlebars.compile(MESSAGE_BEANS_CS, COMPILE_OPTS),
   javaStruct: Handlebars.compile(JAVA_STRUCT, COMPILE_OPTS),
   messagePoolCs: Handlebars.compile(MESSAGE_POOL_CS, COMPILE_OPTS),
+  messageCallbackCs: Handlebars.compile(MESSAGE_CALLBACK_CS, COMPILE_OPTS),
   javaMessage: Handlebars.compile(JAVA_MESSAGE, COMPILE_OPTS),
   messageIdJava: Handlebars.compile(MESSAGE_ID_JAVA, COMPILE_OPTS),
   gameHandlerManagerJava: Handlebars.compile(GAME_HANDLER_MANAGER_JAVA, COMPILE_OPTS),
